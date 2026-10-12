@@ -313,6 +313,13 @@ async function onWorkerMessage(t, m) {
       if (m.segments?.length) t.segments = m.segments;
       setStatus(t, 'error', { code: m.code, message: m.message });
       break;
+    case 'extra':
+      // A second file from the same download (an HLS audio track that
+      // couldn't be joined with the video): saved as its own entry.
+      importFile({ opfsName: m.opfsName, size: m.size, filename: m.filename, referrer: t.referrer }).catch((err) =>
+        console.warn('could not save the extra file', err),
+      );
+      break;
     case 'done':
       endWorker(t);
       Object.assign(t, { size: m.size, downloaded: m.size, segments: m.segments, stats: m.stats });
@@ -462,10 +469,16 @@ async function getOpfsFile(t) {
 }
 
 async function deleteOpfs(t) {
-  try {
-    await (await opfsDir()).removeEntry(t.opfsName);
-  } catch {
-    /* already gone */
+  // An HLS task with separate audio keeps each track in its own file until
+  // they are joined.
+  const names = [t.opfsName, ...(t.hls?.tracks || []).map((x) => x.file)];
+  const dir = await opfsDir();
+  for (const name of new Set(names.filter(Boolean))) {
+    try {
+      await dir.removeEntry(name);
+    } catch {
+      /* already gone */
+    }
   }
 }
 

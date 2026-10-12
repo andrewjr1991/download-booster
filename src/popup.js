@@ -3,7 +3,7 @@
 
 import { ICONS } from './icons.js';
 import { t, localize, engine, addUrls, bytes, speed, duration, statusText } from './client.js';
-import { parsePlaylist, variantLabel } from './hls.js';
+import { parsePlaylist, variantLabel, audioFor } from './hls.js';
 
 localize();
 const $ = (sel) => document.querySelector(sel);
@@ -337,10 +337,11 @@ async function openStream(m) {
         const text = document.createElement('span');
         text.textContent = variantLabel(v);
         label.append(radio, text);
-        // Audio in a separate rendition is not joined in yet.
-        if (v.audio && list.audio.some((a) => a.group === v.audio)) {
+        // Audio in a separate rendition is downloaded too and joined in.
+        const audio = audioFor(list, v);
+        if (audio) {
           const note = document.createElement('small');
-          note.textContent = t('videoOnly');
+          note.textContent = t('separateAudio', [audio.name || '']);
           label.append(note);
         }
         box.append(label);

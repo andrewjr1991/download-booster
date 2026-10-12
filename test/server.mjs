@@ -16,6 +16,11 @@
 //                   unless the Referer is /hlspage. Joined they equal hlsPlain.
 //   /media2         a page with a playable /tone.wav (1 s) and /pic.bmp (200×150),
 //                   which is 403 unless the Referer is /media2
+//   /hlsav/master.m3u8  HLS (CMAF) with the audio as a separate rendition: the
+//                   fixtures' init sections and fragments as byte ranges of
+//                   /mse/video.mp4 and /mse/audio.mp4. Joined they equal mseSha256.
+//   /hlsts/master.m3u8  MPEG-TS video (hlsPlain in 8 plain pieces) with separate
+//                   .aac audio pieces (hlsAudio, sha256 hlsAudioSha256).
 //   /msepage        a blob: video: the page feeds MediaSource the fragmented MP4s in
 //                   test/fixtures (separate video and audio) in small pieces.
 //                   Joined they equal mseSha256. ?end=0 feeds only the first half
@@ -59,6 +64,27 @@ export function startServer({ port = 8787, sizeMB = 40, rateKBps = 2048 } = {}) 
       ),
     )
     .digest('hex');
+  // CMAF HLS: one playlist per fixture, its boxes as byte ranges.
+  const cmafPlaylist = (file) => {
+    const b = mseFiles[file];
+    const top = [];
+    for (let at = 0; at + 8 <= b.length; ) {
+      const size = b.readUInt32BE(at);
+      top.push({ type: b.toString('latin1', at + 4, at + 8), at, size });
+      at += size;
+    }
+    const moov = top.find((x) => x.type === 'moov');
+    const lines = ['#EXTM3U', '#EXT-X-VERSION:7', '#EXT-X-TARGETDURATION:2', `#EXT-X-MAP:URI="${file}",BYTERANGE="${moov.at + moov.size}@0"`];
+    for (const [i, x] of top.entries()) {
+      if (x.type !== 'moof') continue;
+      const mdat = top[i + 1];
+      lines.push('#EXTINF:1,', `#EXT-X-BYTERANGE:${x.size + mdat.size}@${x.at}`, file);
+    }
+    lines.push('#EXT-X-ENDLIST');
+    return lines.join('\n');
+  };
+  const hlsAudio = crypto.randomBytes(4 * 65536);
+  const hlsAudioSha256 = crypto.createHash('sha256').update(hlsAudio).digest('hex');
   const bmp = bitmap(200, 150);
   let requests = 0;
   const log = [];
@@ -136,6 +162,39 @@ export function startServer({ port = 8787, sizeMB = 40, rateKBps = 2048 } = {}) 
         res.writeHead(200, { 'Content-Type': 'video/mp2t' });
         res.end(hlsPieces[Number(seg[2])]);
       } else res.writeHead(404).end();
+      return;
+    }
+    if (path === '/hlsav/master.m3u8' || path === '/hlsts/master.m3u8') {
+      const ts = path.startsWith('/hlsts');
+      res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
+      res.end(
+        '#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="English",LANGUAGE="en",DEFAULT=YES,URI="audio.m3u8"\n' +
+          '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Other",LANGUAGE="fr",URI="other.m3u8"\n' +
+          `#EXT-X-STREAM-INF:BANDWIDTH=300000,RESOLUTION=160x90,AUDIO="aud"${ts ? '' : ',CODECS="vp09.00.10.08,opus"'}\nvideo.m3u8\n`,
+      );
+      return;
+    }
+    if (path === '/hlsav/video.m3u8' || path === '/hlsav/audio.m3u8') {
+      res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
+      res.end(cmafPlaylist(path.endsWith('video.m3u8') ? '/mse/video.mp4' : '/mse/audio.mp4'));
+      return;
+    }
+    if (path === '/hlsts/video.m3u8' || path === '/hlsts/audio.m3u8') {
+      const audio = path.endsWith('audio.m3u8');
+      const lines = ['#EXTM3U', '#EXT-X-TARGETDURATION:4'];
+      for (let i = 0; i < (audio ? 4 : 8); i++) lines.push('#EXTINF:4,', audio ? `a${i}.aac` : `v${i}.ts`);
+      lines.push('#EXT-X-ENDLIST');
+      res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
+      res.end(lines.join('\n'));
+      return;
+    }
+    const tsPiece = /^\/hlsts\/(v|a)(\d+)\.(ts|aac)$/.exec(path);
+    if (tsPiece) {
+      const i = Number(tsPiece[2]);
+      const size = tsPiece[1] === 'v' ? 262144 : 65536;
+      const src = tsPiece[1] === 'v' ? hlsPlain : hlsAudio;
+      res.writeHead(200, { 'Content-Type': tsPiece[1] === 'v' ? 'video/mp2t' : 'audio/aac' });
+      res.end(src.subarray(i * size, (i + 1) * size));
       return;
     }
     if (path === '/msepage') {
@@ -248,7 +307,7 @@ ms.addEventListener('sourceopen', async () => {
   }
 
   return new Promise((resolve) => {
-    server.listen(port, '127.0.0.1', () => resolve({ server, size, sha256, hlsSha256, mseSha256, log, url: `http://127.0.0.1:${port}` }));
+    server.listen(port, '127.0.0.1', () => resolve({ server, size, sha256, hlsSha256, hlsAudioSha256, mseSha256, log, url: `http://127.0.0.1:${port}` }));
   });
 }
 
