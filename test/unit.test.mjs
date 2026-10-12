@@ -4,6 +4,7 @@ import { AdaptiveController, RateLimiter, splitLargest, remaining, MIN_SPLIT } f
 import { parseContentRange, filenameFromDisposition, sanitizeFilename, pickFilename } from '../src/http.js';
 import { categorize, extensionOf, prepareLinks, parsePastedUrls } from '../src/sniff.js';
 import { classify, sizeFrom, mediaKey, addMedia } from '../src/media.js';
+import { parsePlaylist, ivFor, variantLabel } from '../src/hls.js';
 
 test('parseContentRange', () => {
   assert.deepEqual(parseContentRange('bytes 0-99/1000'), { start: 0, end: 100, total: 1000 });
@@ -211,4 +212,72 @@ test('media seen on the network: kinds, sizes, duplicates', () => {
   assert.equal(list[0].url, 'https://v.cdn/v.mp4');
   assert.equal(list[0].name, 'v.mp4');
   assert.equal(list[0].size, 900000);
+});
+
+test('HLS playlists: variants, segments, keys, byte ranges', () => {
+  const master = parsePlaylist(
+    [
+      '#EXTM3U',
+      '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="English",URI="audio/en.m3u8"',
+      '#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360,CODECS="avc1.4d401e,mp4a.40.2"',
+      'low/index.m3u8',
+      '#EXT-X-STREAM-INF:BANDWIDTH=5000000,AVERAGE-BANDWIDTH=4500000,RESOLUTION=1920x1080,AUDIO="aud"',
+      'https://cdn.example/hi/index.m3u8?token=1',
+    ].join('\n'),
+    'https://site.example/v/master.m3u8',
+  );
+  assert.equal(master.type, 'master');
+  assert.deepEqual(
+    master.variants.map((v) => [v.url, v.height, v.bandwidth, v.audio]),
+    [
+      ['https://cdn.example/hi/index.m3u8?token=1', 1080, 4500000, 'aud'],
+      ['https://site.example/v/low/index.m3u8', 360, 800000, null],
+    ],
+  );
+  assert.equal(master.audio[0].url, 'https://site.example/v/audio/en.m3u8');
+  assert.equal(variantLabel(master.variants[0]), '1080p · 4.5 Mbps');
+
+  const media = parsePlaylist(
+    [
+      '#EXTM3U',
+      '#EXT-X-TARGETDURATION:10',
+      '#EXT-X-MEDIA-SEQUENCE:7',
+      '#EXT-X-KEY:METHOD=AES-128,URI="key.bin"',
+      '#EXTINF:9.5,',
+      'seg7.ts',
+      '#EXT-X-KEY:METHOD=AES-128,URI="key2.bin",IV=0x000102030405060708090a0b0c0d0e0f',
+      '#EXTINF:10,',
+      'seg8.ts',
+      '#EXT-X-KEY:METHOD=NONE',
+      '#EXTINF:3.25,',
+      '#EXT-X-BYTERANGE:1000@0',
+      'all.ts',
+      '#EXTINF:3,',
+      '#EXT-X-BYTERANGE:500',
+      'all.ts',
+      '#EXT-X-ENDLIST',
+    ].join('\r\n'),
+    'https://site.example/v/hi/index.m3u8',
+  );
+  assert.equal(media.type, 'media');
+  assert.ok(media.endList && media.encrypted && !media.drm && !media.fmp4);
+  assert.equal(media.duration, 25.75);
+  assert.deepEqual(
+    media.segments.map((s) => [s.url.split('/').pop(), s.seq, s.key?.uri?.split('/').pop() ?? null, s.range]),
+    [
+      ['seg7.ts', 7, 'key.bin', null],
+      ['seg8.ts', 8, 'key2.bin', null],
+      ['all.ts', 9, null, { offset: 0, length: 1000 }],
+      ['all.ts', 10, null, { offset: 1000, length: 500 }],
+    ],
+  );
+  assert.deepEqual([...ivFor(media.segments[0])], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7]);
+  assert.deepEqual([...ivFor(media.segments[1])], [...Array(16).keys()]);
+
+  const fmp4 = parsePlaylist('#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:4,\na.m4s\n', 'https://x/');
+  assert.ok(fmp4.fmp4 && !fmp4.endList);
+  assert.equal(fmp4.segments[0].map.url, 'https://x/init.mp4');
+  const drm = parsePlaylist('#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES,URI="skd://x"\n#EXTINF:4,\na.ts\n#EXT-X-ENDLIST', 'https://x/');
+  assert.ok(drm.drm);
+  assert.throws(() => parsePlaylist('<html>', 'https://x/'));
 });

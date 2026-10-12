@@ -212,9 +212,6 @@
   "catStream": {
     "message": "Streams"
   },
-  "streamHint": {
-    "message": "m3u8/mpd playlist: its pieces can't be merged yet, copy the link instead"
-  },
   "copyLink": {
     "message": "Copy link"
   },
@@ -238,5 +235,23 @@
   },
   "selected": {
     "message": "Selected"
+  },
+  "errLive": {
+    "message": "Live stream (not supported yet)"
+  },
+  "errDrm": {
+    "message": "Protected by DRM, can't be downloaded"
+  },
+  "pieces": {
+    "message": "$1 pieces"
+  },
+  "aes128": {
+    "message": "AES-128 encrypted (handled)"
+  },
+  "videoOnly": {
+    "message": "video only: audio is a separate stream"
+  },
+  "loading": {
+    "message": "Loading…"
   }
 }

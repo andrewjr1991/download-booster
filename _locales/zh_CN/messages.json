@@ -212,9 +212,6 @@
   "catStream": {
     "message": "流媒体"
   },
-  "streamHint": {
-    "message": "m3u8/mpd 播放列表：暂不支持合并分片，可复制链接"
-  },
   "copyLink": {
     "message": "复制链接"
   },
@@ -238,5 +235,23 @@
   },
   "selected": {
     "message": "已选中"
+  },
+  "errLive": {
+    "message": "直播流（暂不支持）"
+  },
+  "errDrm": {
+    "message": "有 DRM 版权保护，无法下载"
+  },
+  "pieces": {
+    "message": "$1 个分片"
+  },
+  "aes128": {
+    "message": "AES-128 加密（可解密）"
+  },
+  "videoOnly": {
+    "message": "仅画面：音频是单独的流"
+  },
+  "loading": {
+    "message": "加载中…"
   }
 }

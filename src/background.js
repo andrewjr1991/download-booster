@@ -271,12 +271,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 async function saveFile({ id, url, filename }) {
-  const downloadId = await chrome.downloads.download({
-    url,
-    filename,
-    conflictAction: 'uniquify',
-    saveAs: false,
-  });
+  const download = (name) => chrome.downloads.download({ url, filename: name, conflictAction: 'uniquify', saveAs: false });
+  let downloadId;
+  try {
+    downloadId = await download(filename);
+  } catch (err) {
+    // Chrome on Linux without a UTF-8 locale refuses non-ASCII names.
+    const ascii = String(filename || '').replace(/[^\x20-\x7e]+/g, '_');
+    if (!/invalid filename/i.test(String(err?.message)) || ascii === filename) throw err;
+    downloadId = await download(ascii);
+  }
   await chrome.storage.session.set({ [`save:${downloadId}`]: id });
   return { downloadId };
 }
@@ -308,16 +312,18 @@ function urlFilterFor(url) {
   return /[*^|]/.test(clean) ? null : `|${clean}|`;
 }
 
-async function setRequestHeaders({ id, urls, referrer, pages = false }) {
+async function setRequestHeaders({ id, urls, domains = [], referrer, pages = false }) {
   if (!referrer || !/^https?:/i.test(referrer)) return { ok: true };
   const { [RULE_IDS_KEY]: map = {} } = await chrome.storage.session.get(RULE_IDS_KEY);
   const used = new Set(Object.values(map).flat());
   const old = map[id] || [];
   const addRules = [];
   let next = 1;
-  for (const url of [...new Set(urls.filter(Boolean))]) {
-    const urlFilter = urlFilterFor(url);
-    if (!urlFilter) continue;
+  // One rule per URL, plus one for whole hosts (an HLS stream's pieces).
+  const filters = [...new Set(urls.filter(Boolean))].map((url) => ({ urlFilter: urlFilterFor(url) })).filter((f) => f.urlFilter);
+  const hosts = [...new Set(domains.filter(Boolean))];
+  if (hosts.length) filters.push({ requestDomains: hosts });
+  for (const filter of filters) {
     while (used.has(next)) next++;
     used.add(next);
     addRules.push({
@@ -328,7 +334,7 @@ async function setRequestHeaders({ id, urls, referrer, pages = false }) {
         requestHeaders: [{ header: 'referer', operation: 'set', value: referrer }],
       },
       condition: {
-        urlFilter,
+        ...filter,
         initiatorDomains: [chrome.runtime.id],
         // Engine requests come from no tab; previews come from our own
         // pages, which can be in a tab (the manager) or not (the popup).

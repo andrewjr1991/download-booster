@@ -11,6 +11,9 @@
 //   /media          a page playing /clip.mp4 (the same bytes as video/mp4), showing
 //                   /photo.jpg (50 KB) and /icon.png (2 KB), and fetching
 //                   /live.m3u8 and one of its /seg1.ts pieces
+//   /hlspage        a page that loads /hls/master.m3u8: two qualities; "hi" has 8
+//                   AES-128 pieces served from localhost (another host), 403
+//                   unless the Referer is /hlspage. Joined they equal hlsPlain.
 //   /media2         a page with a playable /tone.wav (1 s) and /pic.bmp (200×150),
 //                   which is 403 unless the Referer is /media2
 // Add ?ttfb=1500 to delay every response by that many ms (a far-away CDN).
@@ -24,6 +27,16 @@ export function startServer({ port = 8787, sizeMB = 40, rateKBps = 2048 } = {}) 
   const etag = `"${sha256.slice(0, 16)}"`;
   const rate = rateKBps * 1024;
   const tone = wav(1, 440);
+  // HLS: 8 pieces of 256 KB, AES-128-CBC with the sequence number as IV.
+  const hlsKey = crypto.randomBytes(16);
+  const hlsPlain = data.subarray(0, 8 * 256 * 1024);
+  const hlsPieces = [...Array(8).keys()].map((i) => {
+    const iv = Buffer.alloc(16);
+    iv.writeUInt32BE(i, 12);
+    const c = crypto.createCipheriv('aes-128-cbc', hlsKey, iv);
+    return Buffer.concat([c.update(hlsPlain.subarray(i * 262144, (i + 1) * 262144)), c.final()]);
+  });
+  const hlsSha256 = crypto.createHash('sha256').update(hlsPlain).digest('hex');
   const bmp = bitmap(200, 150);
   let requests = 0;
   const log = [];
@@ -66,6 +79,41 @@ export function startServer({ port = 8787, sizeMB = 40, rateKBps = 2048 } = {}) 
           '<img src="/photo.jpg"><img src="/icon.png">' +
           "<script>fetch('/live.m3u8');fetch('/seg1.ts')</script>",
       );
+      return;
+    }
+    if (path === '/hlspage') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end("<title>HLS demo</title><script>fetch('/hls/master.m3u8')</script>");
+      return;
+    }
+    if (path.startsWith('/hls/')) {
+      const name = path.slice(5);
+      const seg = /^hi\/(seg(\d+)\.ts|key\.bin)$/.exec(name);
+      if (seg && !(req.headers.referer || '').startsWith(`http://127.0.0.1:${port}/hlspage`)) {
+        res.writeHead(403).end();
+        return;
+      }
+      if (name === 'master.m3u8') {
+        res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
+        res.end(
+          '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360\nlo/index.m3u8\n' +
+            '#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080\nhi/index.m3u8\n',
+        );
+      } else if (name === 'hi/index.m3u8' || name === 'lo/index.m3u8') {
+        // Pieces on another host name, like a CDN.
+        const cdn = `http://localhost:${port}/hls/hi/`;
+        const lines = ['#EXTM3U', '#EXT-X-TARGETDURATION:4', '#EXT-X-MEDIA-SEQUENCE:0', `#EXT-X-KEY:METHOD=AES-128,URI="${cdn}key.bin"`];
+        hlsPieces.forEach((_, i) => lines.push('#EXTINF:4,', `${cdn}seg${i}.ts`));
+        lines.push('#EXT-X-ENDLIST');
+        res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
+        res.end(lines.join('\n'));
+      } else if (name === 'hi/key.bin') {
+        res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+        res.end(hlsKey);
+      } else if (seg && seg[2] !== undefined && hlsPieces[Number(seg[2])]) {
+        res.writeHead(200, { 'Content-Type': 'video/mp2t' });
+        res.end(hlsPieces[Number(seg[2])]);
+      } else res.writeHead(404).end();
       return;
     }
     if (path === '/media2') {
@@ -149,7 +197,7 @@ export function startServer({ port = 8787, sizeMB = 40, rateKBps = 2048 } = {}) 
   }
 
   return new Promise((resolve) => {
-    server.listen(port, '127.0.0.1', () => resolve({ server, size, sha256, log, url: `http://127.0.0.1:${port}` }));
+    server.listen(port, '127.0.0.1', () => resolve({ server, size, sha256, hlsSha256, log, url: `http://127.0.0.1:${port}` }));
   });
 }
 

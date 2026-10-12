@@ -3,6 +3,7 @@
 
 import { ICONS } from './icons.js';
 import { t, localize, engine, addUrls, bytes, speed, duration, statusText } from './client.js';
+import { parsePlaylist, variantLabel } from './hls.js';
 
 localize();
 const $ = (sel) => document.querySelector(sel);
@@ -121,33 +122,30 @@ function mediaRow(m) {
   const sub = document.createElement('span');
   sub.className = 'sub';
   const ext = extLabel(m);
-  sub.textContent = stream ? t('streamHint') : [m.size ? bytes(m.size) : null, ext || null, host(m.url)].filter(Boolean).join(' · ');
+  sub.textContent = [m.size && !stream ? bytes(m.size) : null, ext || null, host(m.url)].filter(Boolean).join(' · ');
   info.append(name, sub);
-  if (!stream) {
-    info.classList.add('clickable');
-    info.onclick = () => openPreview(m);
-  }
+  info.classList.add('clickable');
+  info.onclick = () => (stream ? openStream(m) : openPreview(m));
 
   const play = document.createElement('button');
   play.className = 'icon';
   play.innerHTML = ICONS.play;
   play.title = t('preview');
   play.onclick = () => openPreview(m);
-  play.hidden = stream;
 
   const act = document.createElement('button');
   act.className = 'icon act';
+  act.innerHTML = ICONS.download;
+  act.title = t('addButton');
+  act.onclick = () => (stream ? openStream(m) : download([m]));
   if (stream) {
-    act.innerHTML = ICONS.copy;
-    act.title = t('copyLink');
-    act.onclick = async () => {
+    // Streams: no preview here; copying the link is the other option.
+    play.innerHTML = ICONS.copy;
+    play.title = t('copyLink');
+    play.onclick = async () => {
       await navigator.clipboard.writeText(m.url);
       toast(t('copied'));
     };
-  } else {
-    act.innerHTML = ICONS.download;
-    act.title = t('addButton');
-    act.onclick = () => download([m]);
   }
   li.append(box, thumb, info, play, act);
   return li;
@@ -259,6 +257,8 @@ function step(delta) {
 }
 
 function closePreview() {
+  $('#pv-select').hidden = false;
+  $('#pv-download').disabled = false;
   $('#pv-stage').querySelector('video, audio')?.pause();
   $('#pv-stage').replaceChildren();
   $('#preview').hidden = true;
@@ -289,9 +289,118 @@ $('#pv-select').onclick = () => {
 };
 $('#pv-download').onclick = () => {
   const m = current;
+  const variant = streamChoice;
   closePreview();
-  download([m]);
+  if (m.kind === 'stream') downloadStream(m, variant);
+  else download([m]);
 };
+
+// ---- m3u8 streams ------------------------------------------------------------------
+// The preview panel lists the stream's qualities instead of playing it; the
+// engine then fetches every piece and joins them into one file.
+
+let streamChoice = null; // variant URL, or null for a plain media playlist
+
+async function getPlaylist(url) {
+  const resp = await fetch(url, { credentials: 'include', cache: 'no-store' });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return parsePlaylist(await resp.text(), resp.url || url);
+}
+
+async function openStream(m) {
+  current = m;
+  streamChoice = null;
+  const stage = $('#pv-stage');
+  stage.dataset.kind = 'stream';
+  stage.replaceChildren();
+  $('#pv-name').textContent = m.name;
+  $('#pv-name').title = m.url;
+  $('#pv-prev').disabled = $('#pv-next').disabled = true;
+  $('#pv-select').hidden = true;
+  $('#pv-download').disabled = true;
+  $('#pv-info').textContent = t('loading');
+  document.body.classList.add('previewing');
+  $('#preview').hidden = false;
+  try {
+    const list = await getPlaylist(m.url);
+    if (current !== m) return;
+    if (list.type === 'master' && list.variants.length) {
+      const box = document.createElement('div');
+      box.className = 'qualities';
+      list.variants.forEach((v, i) => {
+        const label = document.createElement('label');
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = 'quality';
+        radio.checked = i === 0;
+        radio.onchange = () => chooseVariant(m, v);
+        const text = document.createElement('span');
+        text.textContent = variantLabel(v);
+        label.append(radio, text);
+        // Audio in a separate rendition is not joined in yet.
+        if (v.audio && list.audio.some((a) => a.group === v.audio)) {
+          const note = document.createElement('small');
+          note.textContent = t('videoOnly');
+          label.append(note);
+        }
+        box.append(label);
+      });
+      stage.replaceChildren(box);
+      await chooseVariant(m, list.variants[0]);
+    } else {
+      stage.replaceChildren(streamIcon());
+      describe(list);
+    }
+  } catch (err) {
+    if (current === m) $('#pv-info').textContent = `${t('previewFailed')} (${err.message})`;
+  }
+}
+
+function streamIcon() {
+  const art = document.createElement('span');
+  art.className = 'ftype pv-art';
+  art.dataset.kind = 'stream';
+  art.innerHTML = ICONS.stream;
+  return art;
+}
+
+async function chooseVariant(m, v) {
+  streamChoice = v.url;
+  $('#pv-download').disabled = true;
+  $('#pv-info').textContent = t('loading');
+  try {
+    const list = await getPlaylist(v.url);
+    if (current === m && streamChoice === v.url) describe(list);
+  } catch (err) {
+    if (current === m) $('#pv-info').textContent = `${t('previewFailed')} (${err.message})`;
+  }
+}
+
+// Length, number of pieces, and whether it can be downloaded at all.
+function describe(list) {
+  const parts = [duration(list.duration), t('pieces', [String(list.segments.length)])];
+  if (list.encrypted && !list.drm) parts.push(t('aes128'));
+  let ok = true;
+  if (list.drm) {
+    parts.unshift(t('errDrm'));
+    ok = false;
+  } else if (!list.endList) {
+    parts.unshift(t('errLive'));
+    ok = false;
+  }
+  $('#pv-info').textContent = parts.join(' · ');
+  $('#pv-download').disabled = !ok;
+}
+
+async function downloadStream(m, variant) {
+  // Named after the page (the playlist is usually just "index.m3u8").
+  const title = (state.tab?.title || '').trim();
+  const base = title && !/^https?:/i.test(title) ? title : m.name.replace(/\.m3u8$/i, '');
+  await addUrls([m.url], { kind: 'hls', variant, filename: base, source: 'media', referrer: state.tab?.url || null });
+  toast(t('addedCount', ['1']));
+  await refreshTasks();
+  showView('tasks');
+}
 document.addEventListener('keydown', (e) => {
   if ($('#preview').hidden) return;
   if (e.key === 'Escape') {
@@ -342,10 +451,15 @@ async function download(items) {
 
 const ORDER = { downloading: 0, saving: 1, queued: 2, paused: 3, error: 4, completed: 5 };
 
+function fraction(task) {
+  if (task.hls?.total) return task.hls.done / task.hls.total;
+  return task.size ? task.downloaded / task.size : 0;
+}
+
 function taskRow(task) {
   const li = document.createElement('li');
   li.dataset.s = task.status;
-  const kind = /\.(mp4|mkv|webm|mov|avi|flv|m4v)$/i.test(task.filename || '')
+  const kind = /\.(mp4|mkv|webm|mov|avi|flv|m4v|ts)$/i.test(task.filename || '')
     ? 'video'
     : /\.(mp3|m4a|flac|wav|ogg|opus|aac)$/i.test(task.filename || '')
       ? 'audio'
@@ -366,13 +480,14 @@ function taskRow(task) {
   const bar = document.createElement('div');
   bar.className = 'mini-bar';
   const fill = document.createElement('i');
-  const done = task.status === 'completed' ? 1 : task.size ? task.downloaded / task.size : 0;
+  const done = task.status === 'completed' ? 1 : fraction(task);
   fill.style.width = `${Math.round(done * 100)}%`;
   bar.append(fill);
   const sub = document.createElement('span');
   sub.className = 'sub';
   const parts = [statusText(task)];
   if (task.size) parts.push(`${bytes(task.status === 'completed' ? task.size : task.downloaded)} / ${bytes(task.size)}`);
+  else if (task.hls && task.status !== 'completed') parts.push(bytes(task.downloaded), t('pieces', [`${task.hls.done}/${task.hls.total}`]));
   if (task.status === 'downloading') parts.push(speed(task.speed));
   sub.textContent = parts.join(' · ');
   info.append(name, bar, sub);
