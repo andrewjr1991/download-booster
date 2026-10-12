@@ -1,0 +1,125 @@
+{
+  "extName": {
+    "message": "Download Booster – Multi-connection Downloads"
+  },
+  "extShortName": {
+    "message": "Download Booster"
+  },
+  "extDescription": {
+    "message": "Download large files faster with adaptive multi-connection downloads, pause and resume. No extra software needed."
+  },
+  "actionTitle": {
+    "message": "Open download manager"
+  },
+  "menuDownloadLink": {
+    "message": "Download with Download Booster"
+  },
+  "managerTitle": {
+    "message": "Downloads"
+  },
+  "addPlaceholder": {
+    "message": "Paste a download link (http or https)"
+  },
+  "addButton": {
+    "message": "Download"
+  },
+  "settings": {
+    "message": "Settings"
+  },
+  "autoTakeover": {
+    "message": "Take over browser downloads automatically"
+  },
+  "minSize": {
+    "message": "Only files larger than (MB)"
+  },
+  "maxConnections": {
+    "message": "Max connections per download"
+  },
+  "settingsHint": {
+    "message": "Starts with 1 connection and adds more only while the speed keeps rising. Browsers allow at most 6 connections per site (HTTP/1.1); HTTP/2 sites share one."
+  },
+  "statusQueued": {
+    "message": "Starting"
+  },
+  "statusDownloading": {
+    "message": "Downloading"
+  },
+  "statusPaused": {
+    "message": "Paused"
+  },
+  "statusSaving": {
+    "message": "Saving to Downloads folder"
+  },
+  "statusCompleted": {
+    "message": "Completed"
+  },
+  "statusError": {
+    "message": "Failed"
+  },
+  "pause": {
+    "message": "Pause"
+  },
+  "resume": {
+    "message": "Resume"
+  },
+  "retry": {
+    "message": "Retry"
+  },
+  "cancel": {
+    "message": "Cancel"
+  },
+  "remove": {
+    "message": "Remove"
+  },
+  "showInFolder": {
+    "message": "Show in folder"
+  },
+  "clearFinished": {
+    "message": "Clear completed"
+  },
+  "empty": {
+    "message": "No downloads yet. Paste a link above, right-click a link and choose \"Download with Download Booster\", or just download a large file as usual."
+  },
+  "connections": {
+    "message": "$1 connections"
+  },
+  "oneConnection": {
+    "message": "1 connection"
+  },
+  "noRange": {
+    "message": "Server does not support split downloads; using a single connection"
+  },
+  "speedCompare": {
+    "message": "Single connection $1 → average $2 (×$3)"
+  },
+  "avgSpeed": {
+    "message": "Average $1"
+  },
+  "timeLeft": {
+    "message": "$1 left"
+  },
+  "errNetwork": {
+    "message": "Network error"
+  },
+  "errHttp": {
+    "message": "The server returned an error"
+  },
+  "errNoSpace": {
+    "message": "Not enough disk space for this file"
+  },
+  "errSave": {
+    "message": "Could not save the file"
+  },
+  "errRangeUnsupported": {
+    "message": "The file changed on the server; please download it again"
+  },
+  "errEngine": {
+    "message": "Internal error"
+  },
+  "added": {
+    "message": "Added"
+  },
+  "invalidUrl": {
+    "message": "Please enter an http or https link"
+  }
+}

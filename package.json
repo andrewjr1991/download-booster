@@ -1,0 +1,16 @@
+{
+  "name": "download-booster",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser extension for adaptive multi-connection downloads (MV3, pure-extension mode).",
+  "scripts": {
+    "test": "node --test test/unit.test.mjs",
+    "test:e2e": "node test/e2e.mjs",
+    "serve": "node test/server.mjs 8787 200 2048",
+    "zip": "zip -r download-booster.zip manifest.json _locales icons src"
+  },
+  "devDependencies": {
+    "playwright": "^1.56.1"
+  }
+}

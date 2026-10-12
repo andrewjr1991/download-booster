@@ -1,0 +1,197 @@
+:root {
+  --bg: #f6f7f9;
+  --card: #ffffff;
+  --text: #1f2328;
+  --muted: #65707d;
+  --border: #dfe3e8;
+  --accent: #2563eb;
+  --accent-soft: #dbe6fd;
+  --track: #eceff3;
+  --ok: #15803d;
+  --warn: #b45309;
+  --err: #b91c1c;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15171a;
+    --card: #1e2125;
+    --text: #e6e8eb;
+    --muted: #9aa3ad;
+    --border: #30353b;
+    --accent: #6b9bff;
+    --accent-soft: #23345a;
+    --track: #2a2e34;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --err: #f87171;
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 20px 16px 8px;
+}
+h1 {
+  font-size: 20px;
+  margin: 0;
+  flex: 1;
+}
+main {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 0 16px 40px;
+}
+
+button {
+  font: inherit;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  padding: 5px 12px;
+  cursor: pointer;
+}
+button:hover {
+  border-color: var(--accent);
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+button.ghost {
+  background: transparent;
+}
+input[type='url'],
+input[type='number'] {
+  font: inherit;
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+#add {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+#add input {
+  flex: 1;
+  min-width: 0;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 12.5px;
+  margin: 4px 0;
+}
+.empty {
+  color: var(--muted);
+  text-align: center;
+  padding: 40px 16px;
+}
+
+#tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+.task {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.top {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+.name {
+  flex: 1;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.status {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.status[data-s='completed'] {
+  color: var(--ok);
+}
+.status[data-s='error'] {
+  color: var(--err);
+}
+.status[data-s='paused'] {
+  color: var(--warn);
+}
+.bar {
+  display: block;
+  width: 100%;
+  height: 10px;
+  margin: 8px 0 6px;
+  border-radius: 5px;
+}
+.meta {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.compare:empty {
+  display: none;
+}
+.actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.actions:empty {
+  display: none;
+}
+.actions button {
+  font-size: 12.5px;
+  padding: 3px 10px;
+}
+
+#settings {
+  margin-top: 28px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+#settings summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+}
+.row input[type='number'] {
+  width: 100px;
+}
