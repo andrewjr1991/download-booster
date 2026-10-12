@@ -141,6 +141,27 @@ await check('pause and resume uses If-Range and keeps bytes intact', async () =>
   return `paused at ${((paused.downloaded / srv.size) * 100).toFixed(0)}%, ${ifRange} If-Range requests after resume`;
 });
 
+await check('queue: only N tasks download at once, the rest wait and then run', async () => {
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 1, maxActive: 2 });
+  await engine('set-limit', { maxActive: 2 });
+  const ids = [];
+  for (let i = 0; i < 3; i++) ids.push((await engine('add', { url: `${srv.url}/file.bin?q=${i}`, maxConnections: 1 })).id);
+  let maxRunning = 0;
+  let sawQueued = false;
+  for (;;) {
+    const mine = (await engine('list')).tasks.filter((t) => ids.includes(t.id));
+    maxRunning = Math.max(maxRunning, mine.filter((t) => t.status === 'downloading').length);
+    sawQueued ||= mine.some((t) => t.status === 'queued');
+    if (mine.some((t) => t.status === 'error')) throw new Error('a task failed');
+    if (mine.every((t) => t.status === 'completed')) break;
+    await sleep(250);
+  }
+  await engine('set-limit', { maxActive: 3 });
+  if (maxRunning > 2) throw new Error(`${maxRunning} tasks ran at once`);
+  if (!sawQueued) throw new Error('third task never waited in the queue');
+  return `max ${maxRunning} running, third task queued then completed`;
+});
+
 await check('auto takeover of a normal browser download', async () => {
   await setSettings({ autoTakeover: true, minSizeMB: 20, maxConnections: 6 });
   const before = (await engine('list')).tasks.map((t) => t.id);
