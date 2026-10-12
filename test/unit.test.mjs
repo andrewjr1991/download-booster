@@ -30,38 +30,72 @@ test('splitLargest halves the active segment with most bytes left', () => {
   assert.equal(remaining(segs[0]) + remaining(s), 90 * MIN_SPLIT);
 });
 
-// Simulate a server that caps each request at `perConn` bytes/s and the line at `cap`.
-function simulate(perConn, cap, max = 6) {
-  const c = new AdaptiveController({ max, warmupMs: 2000, probeMs: 3000 });
-  let now = 0;
-  for (; now < 30000; now += 500) {
-    const speed = Math.min(c.target * perConn, cap);
-    c.tick(now, speed, c.target);
+// Simulated network: each connection gets `perConn` MB/s after a time to
+// first byte and a linear ramp-up; the line caps the total at `cap` MB/s.
+function simulate({ perConn, cap, max = 6, ttfb = 0, rampMs = 0, noise = 0, until = 60000, events = {} }) {
+  const c = new AdaptiveController({ max });
+  let seed = 42;
+  const rand = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+  const conns = [-60000]; // connection 1 is already streaming when ticking starts
+  const trace = [];
+  let bytes = 0;
+  for (let t = 0; t <= until; t += 500) {
+    let sum = 0;
+    for (const s of conns) {
+      const a = t - s - ttfb;
+      if (a > 0) sum += perConn * (rampMs ? Math.min(1, a / rampMs) : 1);
+    }
+    bytes += Math.min(sum, cap) * 0.5 * (1 - noise + 2 * noise * rand());
+    events[t]?.(c, t);
+    const streaming = conns.filter((s) => t - s >= ttfb).length;
+    c.tick(t, bytes, streaming);
+    while (conns.length < c.target) conns.push(t);
+    while (conns.length > c.target) conns.pop();
+    trace.push([t, c.target]);
   }
-  return c;
+  return { c, trace };
 }
+const minAfter = (trace, t0) => Math.min(...trace.filter(([t]) => t >= t0).map(([, n]) => n));
 
 test('adds connections while speed rises, stops at the plateau', () => {
   // Per-request limit 1 MB/s, line 4 MB/s: best is 4 connections.
-  const c = simulate(1, 4);
-  assert.equal(c.target, 4);
+  const { c, trace } = simulate({ perConn: 1, cap: 4 });
+  assert.equal(c.best, 4);
   assert.equal(c.singleSpeed, 1);
-  assert.equal(c.phase, 'stable');
+  assert.equal(minAfter(trace, 20000), 4);
+});
+
+test('a slow-starting extra connection is not judged useless (real CDN case)', () => {
+  // 7 MB/s per connection, 14 MB/s line, new connections need 1.5 s to the
+  // first byte and 2.5 s to ramp up, ±10% noise. Must hold 2 connections.
+  const { c, trace } = simulate({ perConn: 7, cap: 14, ttfb: 1500, rampMs: 2500, noise: 0.1, until: 180000 });
+  assert.equal(c.best, 2);
+  assert.equal(minAfter(trace, 20000), 2);
 });
 
 test('stays on one connection when more do not help', () => {
-  const c = simulate(10, 10);
-  assert.equal(c.target, 1);
+  const { c, trace } = simulate({ perConn: 10, cap: 10, noise: 0.05, until: 120000 });
+  assert.equal(c.best, 1);
+  const atOne = trace.filter(([, n]) => n === 1).length / trace.length;
+  assert.ok(atOne > 0.6, `only ${atOne} of the time on 1 connection`);
 });
 
 test('never exceeds max', () => {
-  const c = simulate(1, 100, 6);
+  const { c, trace } = simulate({ perConn: 1, cap: 100, max: 6 });
   assert.equal(c.target, 6);
+  assert.ok(trace.every(([, n]) => n <= 6));
 });
 
-test('backoff drops a connection and caps the max', () => {
-  const c = simulate(1, 4);
-  c.backoff(100000);
-  assert.equal(c.target, 3);
-  assert.equal(c.max, 3);
+test('backoff drops one connection, then probes again after the cooldown', () => {
+  const events = {
+    30000: (c, t) => {
+      c.backoff(t);
+      c.backoff(t + 500); // a burst of errors counts once
+    },
+  };
+  const { trace } = simulate({ perConn: 1, cap: 4, until: 150000, events });
+  const at = (ms) => trace.find(([t]) => t === ms)[1];
+  assert.equal(at(30000), 3);
+  assert.equal(at(55000), 3);
+  assert.equal(at(150000) >= 4, true);
 });

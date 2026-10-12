@@ -5,6 +5,7 @@
 //   /file.bin       Range-capable, ETag, throttled per request
 //   /norange.bin    same bytes, ignores Range (always 200)
 //   /flaky.bin      Range-capable but every 4th request is answered 503
+// Add ?ttfb=1500 to delay every response by that many ms (a far-away CDN).
 import http from 'node:http';
 import crypto from 'node:crypto';
 
@@ -18,6 +19,12 @@ export function startServer({ port = 8787, sizeMB = 40, rateKBps = 2048 } = {}) 
   const log = [];
 
   const server = http.createServer((req, res) => {
+    const ttfb = Number(new URL(req.url, 'http://x').searchParams.get('ttfb')) || 0;
+    if (ttfb) setTimeout(() => handle(req, res), ttfb);
+    else handle(req, res);
+  });
+
+  function handle(req, res) {
     requests++;
     const path = new URL(req.url, 'http://x').pathname;
     const range = req.headers.range;
@@ -71,7 +78,7 @@ export function startServer({ port = 8787, sizeMB = 40, rateKBps = 2048 } = {}) 
       pos += n;
     }, 100);
     res.on('close', () => clearInterval(timer));
-  });
+  }
 
   return new Promise((resolve) => {
     server.listen(port, '127.0.0.1', () => resolve({ server, size, sha256, log, url: `http://127.0.0.1:${port}` }));

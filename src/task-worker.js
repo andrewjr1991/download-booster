@@ -164,7 +164,10 @@ function tick() {
   meter.add(now, done);
   const speed = meter.speed();
   peakSpeed = Math.max(peakSpeed, speed);
-  if (task.rangeSupported) controller.tick(now, speed, conns.size);
+  if (task.rangeSupported) {
+    const streaming = [...conns.values()].filter((c) => c.streaming).length;
+    controller.tick(now, done, streaming);
+  }
   schedule();
 
   let checkpoint = false;
@@ -238,6 +241,7 @@ async function runConn(seg, resp = null, ac = new AbortController()) {
       let chunk = value;
       const room = seg.end - seg.pos;
       if (chunk.byteLength > room) chunk = chunk.subarray(0, room);
+      conn.streaming = true;
       if (chunk.byteLength) {
         handle.write(chunk, { at: seg.pos });
         seg.pos += chunk.byteLength;
