@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { AdaptiveController, splitLargest, remaining, MIN_SPLIT } from '../src/scheduler.js';
 import { parseContentRange, filenameFromDisposition, sanitizeFilename, pickFilename } from '../src/http.js';
+import { categorize, extensionOf, prepareLinks, parsePastedUrls } from '../src/sniff.js';
 
 test('parseContentRange', () => {
   assert.deepEqual(parseContentRange('bytes 0-99/1000'), { start: 0, end: 100, total: 1000 });
@@ -112,4 +113,32 @@ test('backoff drops one connection, then probes again after the cooldown', () =>
   assert.ok(at(55000) >= 3);
   const later = trace.filter(([t]) => t >= 65000);
   assert.ok(later.filter(([, n]) => n >= 4).length / later.length > 0.7, 'did not return to 4 connections');
+});
+
+test('sniffed links: categories, dedupe, pasted lists', () => {
+  assert.equal(categorize('https://x.com/a/Movie.MKV?sig=1'), 'video');
+  assert.equal(categorize('https://x.com/win11.iso'), 'disk');
+  assert.equal(categorize('https://x.com/archive.tar.gz'), 'archive');
+  assert.equal(categorize('https://x.com/a%20b.pdf'), 'document');
+  assert.equal(categorize('https://x.com/about'), 'other');
+  assert.equal(categorize('https://x.com/'), 'other');
+  assert.equal(extensionOf('not a url'), '');
+
+  const links = prepareLinks([
+    { url: 'https://x.com/a.zip', text: '  A  ' },
+    { url: 'https://x.com/a.zip#top', text: 'dup' },
+    { url: 'javascript:void(0)', text: 'js' },
+    { url: 'mailto:a@x.com' },
+    { url: 'https://x.com/b.mp3' },
+  ]);
+  assert.deepEqual(links, [
+    { url: 'https://x.com/a.zip', text: 'A', category: 'archive' },
+    { url: 'https://x.com/b.mp3', text: '', category: 'audio' },
+  ]);
+
+  assert.deepEqual(parsePastedUrls(' https://x.com/1.zip\nhttps://x.com/2.zip  ftp://no\r\n\nhttps://x.com/1.zip\nhello '), [
+    'https://x.com/1.zip',
+    'https://x.com/2.zip',
+  ]);
+  assert.deepEqual(parsePastedUrls(''), []);
 });

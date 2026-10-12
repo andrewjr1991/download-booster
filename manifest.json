@@ -29,7 +29,8 @@
     "contextMenus",
     "storage",
     "unlimitedStorage",
-    "declarativeNetRequestWithHostAccess"
+    "declarativeNetRequestWithHostAccess",
+    "scripting"
   ],
   "host_permissions": ["<all_urls>"]
 }

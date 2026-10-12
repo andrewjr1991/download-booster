@@ -16,10 +16,26 @@
 
     <main>
       <form id="add">
-        <input id="url" type="url" required data-i18n-placeholder="addPlaceholder" autocomplete="off" />
+        <textarea id="url" rows="1" required data-i18n-placeholder="addPlaceholder" autocomplete="off" spellcheck="false"></textarea>
         <button type="submit" class="primary" data-i18n="addButton">Download</button>
       </form>
       <p id="add-msg" class="hint" hidden></p>
+
+      <section id="sniff" hidden>
+        <div class="sniff-head">
+          <h2 data-i18n="sniffTitle"></h2>
+          <button id="sniff-close" class="ghost" data-i18n="close"></button>
+        </div>
+        <p class="hint" id="sniff-source"></p>
+        <div id="sniff-filters" class="chips"></div>
+        <div class="sniff-tools">
+          <label><input type="checkbox" id="sniff-all" /> <span data-i18n="selectAll"></span></label>
+          <input id="sniff-search" type="search" data-i18n-placeholder="filterPlaceholder" />
+        </div>
+        <ul id="sniff-list"></ul>
+        <p id="sniff-empty" class="hint" data-i18n="sniffEmpty" hidden></p>
+        <button id="sniff-go" class="primary"></button>
+      </section>
 
       <section id="tasks" aria-live="polite"></section>
       <p id="empty" class="empty" data-i18n="empty" hidden></p>

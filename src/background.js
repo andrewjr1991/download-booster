@@ -1,3 +1,5 @@
+import { collectLinks, prepareLinks } from './sniff.js';
+
 // MV3 service worker: only a dispatcher. It can be killed after 30 s idle, so
 // all download work lives in the offscreen document (offscreen.js).
 
@@ -64,6 +66,11 @@ chrome.runtime.onInstalled.addListener(() => {
     title: chrome.i18n.getMessage('menuDownloadLink'),
     contexts: ['link', 'video', 'audio', 'image'],
   });
+  chrome.contextMenus.create({
+    id: 'sniff-page',
+    title: chrome.i18n.getMessage('menuSniffPage'),
+    contexts: ['page'],
+  });
   ensureEngine();
 });
 
@@ -71,7 +78,8 @@ chrome.runtime.onStartup.addListener(() => {
   ensureEngine(); // resumes tasks interrupted by the last browser exit
 });
 
-chrome.contextMenus.onClicked.addListener(async (info) => {
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId === 'sniff-page') return sniffPage(tab);
   const url = info.linkUrl || info.srcUrl;
   if (!url || !/^https?:/i.test(url)) return;
   await addDownload({ url, source: 'menu', referrer: info.frameUrl || info.pageUrl });
@@ -80,14 +88,38 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
 
 chrome.action.onClicked.addListener(() => openManager());
 
-async function openManager() {
-  const [tab] = await chrome.tabs.query({ url: MANAGER_URL });
-  if (tab) {
-    await chrome.tabs.update(tab.id, { active: true });
-    await chrome.windows.update(tab.windowId, { focused: true });
-  } else {
-    await chrome.tabs.create({ url: MANAGER_URL });
+// Collect every link and media source on the page (all frames) and hand
+// the list to the manager page for picking.
+async function sniffPage(tab) {
+  if (!tab?.id) return;
+  let raw = [];
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id, allFrames: true },
+      func: collectLinks,
+    });
+    raw = results.flatMap((r) => r.result || []);
+  } catch (err) {
+    console.warn('sniff failed', err); // e.g. chrome:// pages
   }
+  await chrome.storage.session.set({
+    sniff: { pageUrl: tab.url, title: tab.title, links: prepareLinks(raw), at: Date.now() },
+  });
+  await openManager('?sniff=1');
+}
+
+// Context menus can't be clicked in a headless browser; the e2e test calls this.
+globalThis.sniffPage = sniffPage;
+
+// Focus the open manager tab (navigating it to `query` if given), or open one.
+// Without the "tabs" permission chrome.tabs.query can't match our own page by
+// URL, so look it up among the extension's contexts.
+async function openManager(query = '') {
+  const contexts = await chrome.runtime.getContexts({ contextTypes: ['TAB'] });
+  const open = contexts.find((c) => c.documentUrl?.startsWith(MANAGER_URL) && c.tabId >= 0);
+  if (!open) return chrome.tabs.create({ url: MANAGER_URL + query });
+  await chrome.tabs.update(open.tabId, query ? { url: MANAGER_URL + query, active: true } : { active: true });
+  await chrome.windows.update(open.windowId, { focused: true });
 }
 
 // Automatic takeover of browser downloads. The native download is paused
