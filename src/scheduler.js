@@ -44,7 +44,8 @@ export function sortedSegments(segments) {
 // Adaptive concurrency: start with 1 connection and add more while the
 // measured speed keeps rising by at least `gain` (doubling while the gain is
 // near-linear, then one at a time), step back to the best level when it
-// plateaus, and re-probe one level higher every `reprobeMs`.
+// plateaus, then keep re-checking one level higher (every `reprobeMs`) and
+// one level lower (every `downProbeMs`).
 //
 // Each level is judged on its average throughput over `measureMs`, and the
 // clock only starts once every connection of that level is streaming and has
@@ -57,6 +58,8 @@ export class AdaptiveController {
     measureMs = 3000,
     rampTimeoutMs = 10000,
     gain = 1.12,
+    dropTolerance = 0.95,
+    downProbeMs = 60000,
     reprobeMs = 20000,
     cooldownMs = 30000,
   } = {}) {
@@ -65,6 +68,10 @@ export class AdaptiveController {
     this.measureMs = measureMs;
     this.rampTimeoutMs = rampTimeoutMs;
     this.gain = gain;
+    this.dropTolerance = dropTolerance;
+    this.downProbeMs = downProbeMs;
+    this.downFrom = null;
+    this.nextDownAt = null;
     this.reprobeMs = reprobeMs;
     this.cooldownMs = cooldownMs;
     this.target = 1;
@@ -108,18 +115,35 @@ export class AdaptiveController {
       } else if (now - this.measureStart >= this.measureMs) {
         this.#judge(now, ((bytes - this.measureBytes) * 1000) / (now - this.measureStart));
       }
-    } else if (now >= this.nextProbeAt && this.target < this.max && streaming >= this.target) {
-      // stable: try one more connection against the recent average.
-      this.baseline = this.#rollingSpeed();
-      this.best = this.target;
-      this.slowStart = false;
-      this.#raise(now, this.target + 1);
+    } else if (streaming >= this.target) {
+      // stable: re-check against the recent average, one connection more
+      // every `reprobeMs` and one fewer less often. Speeds drift during a
+      // long download (an early burst, the server changing its limits), so
+      // a level is only ever compared with one measured moments before.
+      const down = this.target > 1 && now >= this.nextDownAt;
+      const up = !down && this.target < this.max && now >= this.nextProbeAt;
+      if (down || up) {
+        this.baseline = this.#rollingSpeed();
+        this.best = this.target;
+        this.slowStart = false;
+        if (down) this.downFrom = this.target;
+        this.#raise(now, this.target + (down ? -1 : 1));
+      }
     }
     return this.target;
   }
 
   #judge(now, speed) {
     this.levels[this.target] = Math.round(speed);
+    if (this.downFrom) {
+      // One fewer connection is about as fast: keep the smaller number and
+      // soon try one fewer again. Otherwise go back and wait longer.
+      const from = this.downFrom;
+      const fewerIsFine = speed >= this.baseline * this.dropTolerance;
+      this.#settle(now, fewerIsFine ? this.target : from, this.reprobeMs);
+      this.nextDownAt = now + (fewerIsFine ? this.reprobeMs : this.downProbeMs);
+      return;
+    }
     if (this.baseline === null) {
       if (this.target === 1) this.singleSpeed = speed;
       return this.#accept(now, speed);
@@ -155,6 +179,8 @@ export class AdaptiveController {
   }
 
   #settle(now, level, wait) {
+    this.downFrom = null;
+    this.nextDownAt ??= now + this.downProbeMs;
     this.target = Math.max(1, Math.min(level, this.max));
     this.best = this.target;
     this.phase = 'stable';

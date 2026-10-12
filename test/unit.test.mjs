@@ -32,7 +32,7 @@ test('splitLargest halves the active segment with most bytes left', () => {
 
 // Simulated network: each connection gets `perConn` MB/s after a time to
 // first byte and a linear ramp-up; the line caps the total at `cap` MB/s.
-function simulate({ perConn, cap, max = 6, ttfb = 0, rampMs = 0, noise = 0, until = 60000, events = {} }) {
+function simulate({ perConn, cap, capAt, max = 6, ttfb = 0, rampMs = 0, noise = 0, until = 60000, events = {} }) {
   const c = new AdaptiveController({ max });
   let seed = 42;
   const rand = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
@@ -45,7 +45,7 @@ function simulate({ perConn, cap, max = 6, ttfb = 0, rampMs = 0, noise = 0, unti
       const a = t - s - ttfb;
       if (a > 0) sum += perConn * (rampMs ? Math.min(1, a / rampMs) : 1);
     }
-    bytes += Math.min(sum, cap) * 0.5 * (1 - noise + 2 * noise * rand());
+    bytes += Math.min(sum, capAt ? capAt(t) : cap) * 0.5 * (1 - noise + 2 * noise * rand());
     events[t]?.(c, t);
     const streaming = conns.filter((s) => t - s >= ttfb).length;
     c.tick(t, bytes, streaming);
@@ -70,7 +70,20 @@ test('a slow-starting extra connection is not judged useless (real CDN case)', (
   // first byte and 2.5 s to ramp up, ±10% noise. Must hold 2 connections.
   const { c, trace } = simulate({ perConn: 7, cap: 14, ttfb: 1500, rampMs: 2500, noise: 0.1, until: 180000 });
   assert.equal(c.best, 2);
-  assert.equal(minAfter(trace, 20000), 2);
+  // Brief dips are the periodic one-fewer re-checks.
+  const later = trace.filter(([t]) => t >= 20000);
+  const share = later.filter(([, n]) => n >= 2).length / later.length;
+  assert.ok(share > 0.9, `only ${share} of the time on 2+ connections`);
+});
+
+test('comes back down when extra connections stop helping', () => {
+  // 4 MB/s per connection up to 12 MB/s: 3 connections. From 60 s on the
+  // server caps the whole download at 4 MB/s, so 1 connection is enough.
+  const capAt = (t) => (t < 60000 ? 12 : 4);
+  const { trace } = simulate({ perConn: 4, cap: 12, capAt, until: 240000 });
+  const at = (ms) => trace.find(([t]) => t === ms)[1];
+  assert.ok(at(55000) >= 3);
+  assert.ok(trace.filter(([t]) => t >= 180000).every(([, n]) => n <= 2), 'still above 2 connections after 3 minutes');
 });
 
 test('stays on one connection when more do not help', () => {
@@ -96,6 +109,7 @@ test('backoff drops one connection, then probes again after the cooldown', () =>
   const { trace } = simulate({ perConn: 1, cap: 4, until: 150000, events });
   const at = (ms) => trace.find(([t]) => t === ms)[1];
   assert.equal(at(30000), 3);
-  assert.equal(at(55000), 3);
-  assert.equal(at(150000) >= 4, true);
+  assert.ok(at(55000) >= 3);
+  const later = trace.filter(([t]) => t >= 65000);
+  assert.ok(later.filter(([, n]) => n >= 4).length / later.length > 0.7, 'did not return to 4 connections');
 });

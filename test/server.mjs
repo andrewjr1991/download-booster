@@ -7,6 +7,7 @@
 //   /flaky.bin      Range-capable but every 4th request is answered 503
 //   /hotlink.bin    like /file.bin but 403 unless Referer is this server's /page
 //   /page           an HTML page linking to /hotlink.bin
+//   /cookie.bin     like /file.bin but 403 without the cookie session=1
 // Add ?ttfb=1500 to delay every response by that many ms (a far-away CDN).
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -30,7 +31,7 @@ export function startServer({ port = 8787, sizeMB = 40, rateKBps = 2048 } = {}) 
     requests++;
     const path = new URL(req.url, 'http://x').pathname;
     const range = req.headers.range;
-    log.push({ path, range, ifRange: req.headers['if-range'], referer: req.headers.referer });
+    log.push({ path, range, ifRange: req.headers['if-range'], referer: req.headers.referer, cookie: !!req.headers.cookie });
     if (path === '/flaky.bin' && requests % 4 === 0) {
       res.writeHead(503).end();
       return;
@@ -44,7 +45,11 @@ export function startServer({ port = 8787, sizeMB = 40, rateKBps = 2048 } = {}) 
       res.writeHead(403).end('hotlinking not allowed');
       return;
     }
-    if (!['/file.bin', '/norange.bin', '/flaky.bin', '/hotlink.bin'].includes(path)) {
+    if (path === '/cookie.bin' && !/(^|;\s*)session=1(;|$)/.test(req.headers.cookie || '')) {
+      res.writeHead(403).end('login required');
+      return;
+    }
+    if (!['/file.bin', '/norange.bin', '/flaky.bin', '/hotlink.bin', '/cookie.bin'].includes(path)) {
       res.writeHead(404).end();
       return;
     }
