@@ -207,6 +207,16 @@ export class AdaptiveController {
     this.#settle(now, this.target - 1, wait);
   }
 
+  // Conditions changed for the better (the speed limit was raised or lifted):
+  // measure the current level afresh and climb again with doubling, instead
+  // of one connection per `reprobeMs`.
+  rethink(now) {
+    this.baseline = null;
+    this.slowStart = true;
+    this.downFrom = null;
+    this.#raise(now, this.target);
+  }
+
   snapshot() {
     return {
       target: this.target,
@@ -232,5 +242,31 @@ export class SpeedMeter {
     const [t0, b0] = this.samples[0];
     const [t1, b1] = this.samples[this.samples.length - 1];
     return t1 > t0 ? ((b1 - b0) * 1000) / (t1 - t0) : 0;
+  }
+}
+
+// Token bucket for the speed limit. Every connection of a task calls take()
+// after receiving a chunk and waits the returned number of milliseconds
+// before reading on, so the task's connections together stay at `rate`
+// bytes/s (TCP flow control slows the server down while we wait).
+// A rate of 0 means no limit.
+export class RateLimiter {
+  constructor(rate = 0) {
+    this.tokens = 0;
+    this.last = null;
+    this.setRate(rate);
+  }
+  setRate(rate) {
+    this.rate = rate > 0 ? rate : 0;
+    // A quarter second of burst keeps reads smooth without overshooting.
+    this.burst = Math.max(64 * 1024, this.rate / 4);
+    this.tokens = Math.min(this.tokens, this.burst);
+  }
+  take(n, now) {
+    if (!this.rate) return 0;
+    if (this.last !== null) this.tokens = Math.min(this.burst, this.tokens + ((now - this.last) * this.rate) / 1000);
+    this.last = now;
+    this.tokens -= n;
+    return this.tokens < 0 ? Math.ceil((-this.tokens * 1000) / this.rate) : 0;
   }
 }

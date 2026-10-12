@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { AdaptiveController, splitLargest, remaining, MIN_SPLIT } from '../src/scheduler.js';
+import { AdaptiveController, RateLimiter, splitLargest, remaining, MIN_SPLIT } from '../src/scheduler.js';
 import { parseContentRange, filenameFromDisposition, sanitizeFilename, pickFilename } from '../src/http.js';
 import { categorize, extensionOf, prepareLinks, parsePastedUrls } from '../src/sniff.js';
 
@@ -141,4 +141,43 @@ test('sniffed links: categories, dedupe, pasted lists', () => {
     'https://x.com/2.zip',
   ]);
   assert.deepEqual(parsePastedUrls(''), []);
+});
+
+test('speed limit: connections together stay at the rate', () => {
+  // Three connections that could each pull 64 KB every 10 ms (6.4 MB/s),
+  // limited to 1 MB/s in total.
+  const rate = 1 << 20;
+  const lim = new RateLimiter(rate);
+  const next = [0, 3, 7];
+  let bytes = 0;
+  let now = 0;
+  while (now < 20000) {
+    const i = next.indexOf(Math.min(...next));
+    now = next[i];
+    bytes += 65536;
+    next[i] = now + 10 + lim.take(65536, now);
+  }
+  const speed = bytes / 20;
+  assert.ok(Math.abs(speed - rate) / rate < 0.05, `${speed} vs ${rate}`);
+
+  assert.equal(new RateLimiter(0).take(1e9, 0), 0, 'no limit never waits');
+  lim.setRate(0);
+  assert.equal(lim.take(1e9, now), 0);
+});
+
+test('rethink climbs again quickly once a limit is lifted', () => {
+  const c = new AdaptiveController({ max: 6 });
+  const run = (from, to, perConnCap) => {
+    let bytes = run.bytes || 0;
+    for (let now = from; now < to; now += 100) {
+      bytes += (Math.min(c.target * 2, perConnCap) * 1048576) / 10;
+      c.tick(now, bytes, c.target);
+    }
+    run.bytes = bytes;
+  };
+  run(0, 30000, 1.5); // limited to 1.5 MB/s: one connection is plenty
+  assert.ok(c.target <= 2, `target ${c.target}`); // 2 only while re-probing
+  c.rethink(30000);
+  run(30000, 50000, 100); // 2 MB/s per connection, no limit
+  assert.ok(c.target >= 4, `target ${c.target}`);
 });

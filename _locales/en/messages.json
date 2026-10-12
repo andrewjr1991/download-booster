@@ -178,5 +178,17 @@
   },
   "addedCount": {
     "message": "Added $1 downloads"
+  },
+  "speedLimit": {
+    "message": "Speed limit for all downloads (MB/s)"
+  },
+  "noLimit": {
+    "message": "No limit"
+  },
+  "totalSpeed": {
+    "message": "Total $1"
+  },
+  "limitedTo": {
+    "message": "limited to $1"
   }
 }

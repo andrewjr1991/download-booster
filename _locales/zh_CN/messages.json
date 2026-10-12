@@ -178,5 +178,17 @@
   },
   "addedCount": {
     "message": "已添加 $1 个下载"
+  },
+  "speedLimit": {
+    "message": "所有下载的总速度上限（MB/s）"
+  },
+  "noLimit": {
+    "message": "不限速"
+  },
+  "totalSpeed": {
+    "message": "总速度 $1"
+  },
+  "limitedTo": {
+    "message": "限速 $1"
   }
 }

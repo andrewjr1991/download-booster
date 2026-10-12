@@ -311,6 +311,34 @@ await check('sniffing a page lists its files and downloads the picked ones with 
   return `chips ${chips.join(' ')}, 1 file picked, ${ours.length} requests with Referer`;
 });
 
+await check('speed limit: all tasks together stay under it, and lifting it speeds up', async () => {
+  const LIMIT = 1.5 * 1048576;
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6, speedLimitMB: 1.5 });
+  await engine('set-limit', { maxActive: 3, speedLimit: LIMIT });
+  const ids = [];
+  for (let i = 0; i < 2; i++) ids.push((await engine('add', { url: `${srv.url}/file.bin?limit=${i}`, maxConnections: 6 })).id);
+  const total = async () => (await engine('list')).tasks.filter((t) => ids.includes(t.id)).reduce((s, t) => s + t.downloaded, 0);
+  await sleep(3000);
+  let b0 = await total();
+  let t0 = Date.now();
+  await sleep(8000);
+  const limited = ((await total()) - b0) / ((Date.now() - t0) / 1000);
+  if (limited > LIMIT * 1.15 || limited < LIMIT * 0.75) throw new Error(`limited speed ${mbps(limited, 1000)}`);
+  await engine('set-limit', { maxActive: 3, speedLimit: 0 });
+  await sleep(4000);
+  b0 = await total();
+  t0 = Date.now();
+  await sleep(4000);
+  const free = ((await total()) - b0) / ((Date.now() - t0) / 1000);
+  if (free < LIMIT * 2) throw new Error(`after lifting the limit only ${mbps(free, 1000)}`);
+  const done = await waitTask(ids[0], (t) => t.status === 'completed');
+  await waitTask(ids[1], (t) => t.status === 'completed');
+  const { hash } = await savedFileHash(done.downloadId);
+  if (hash !== srv.sha256) throw new Error('hash mismatch');
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6 });
+  return `2 tasks limited to 1.5 MB/s: ${mbps(limited, 1000)}; unlimited: ${mbps(free, 1000)}`;
+});
+
 await check('small files are left to the browser', async () => {
   await setSettings({ autoTakeover: true, minSizeMB: SIZE_MB + 1, maxConnections: 6 });
   const before = (await engine('list')).tasks.map((t) => t.id);
