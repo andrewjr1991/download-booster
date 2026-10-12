@@ -107,6 +107,12 @@ await check('adaptive multi-connection, bytes identical', async () => {
   return `${mbps(srv.size, r.ms)} (×${(single.ms / r.ms).toFixed(1)}), peak ${r.maxConns} conns, levels MB/s {${levels}}`;
 });
 
+await check('slow first byte (1.5 s per request) still scales past 1 connection', async () => {
+  const r = await download(`${srv.url}/file.bin?ttfb=1500`, { maxConnections: 6 });
+  if (r.maxConns < 4) throw new Error(`peaked at ${r.maxConns} connections`);
+  return `${mbps(srv.size, r.ms)}, peak ${r.maxConns} conns`;
+});
+
 await check('server without Range support falls back to one stream', async () => {
   const r = await download(`${srv.url}/norange.bin`, { maxConnections: 6 });
   if (r.done.rangeSupported !== false || r.maxConns > 1) throw new Error('expected single stream');

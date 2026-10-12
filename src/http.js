@@ -52,6 +52,7 @@ export function pickFilename({ disposition, url, fallback }) {
 }
 
 // Status codes that mean "too many requests from you": back off concurrency.
+// 403 is not one of them: it usually means an expired or forbidden link.
 export function isThrottleStatus(status) {
-  return status === 429 || status === 503 || status === 403;
+  return status === 429 || status === 503;
 }
