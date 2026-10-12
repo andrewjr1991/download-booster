@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { AdaptiveController, RateLimiter, splitLargest, remaining, MIN_SPLIT } from '../src/scheduler.js';
 import { parseContentRange, filenameFromDisposition, sanitizeFilename, pickFilename } from '../src/http.js';
-import { categorize, extensionOf, prepareLinks, parsePastedUrls } from '../src/sniff.js';
+import { categorize, extensionOf, prepareLinks, parsePastedUrls, mergeMedia } from '../src/sniff.js';
 import { classify, sizeFrom, mediaKey, addMedia } from '../src/media.js';
 import { parsePlaylist, ivFor, variantLabel } from '../src/hls.js';
 import { Mp4Stream, mux, canJoin, children, parseMoov } from '../src/fmp4.js';
@@ -317,4 +317,28 @@ test('recorded fMP4: chunks, repeats and two tracks become one file', () => {
     moofs.map((m) => new DataView(out.buffer, m.start + 20, 4).getUint32(0)),
     moofs.map((_, i) => i + 1),
   );
+});
+
+test('sniffed links: media the page loaded comes first, with its kind and size', () => {
+  const links = prepareLinks([
+    { url: 'https://x.com/about', text: 'About' },
+    { url: 'https://cdn.x.com/a.mp4', text: 'Trailer' },
+    { url: 'https://x.com/list.m3u8' },
+  ]);
+  assert.equal(links[2].category, 'stream');
+  const merged = mergeMedia(links, [
+    { url: 'https://cdn.x.com/a.mp4', kind: 'video', size: 5e6, name: 'a.mp4' },
+    { url: 'https://cdn.x.com/s.mp3', kind: 'audio', size: 3000, name: 's.mp3' },
+    { url: 'https://cdn.x.com/v.mpd', kind: 'stream', size: 900, name: 'v.mpd' },
+  ]);
+  assert.deepEqual(
+    merged.map((l) => [l.url.replace(/^https:\/\/[^/]+/, ''), l.category, l.size ?? null, !!l.media]),
+    [
+      ['/a.mp4', 'video', 5e6, true],
+      ['/s.mp3', 'audio', 3000, true],
+      ['/about', 'other', null, false],
+      ['/list.m3u8', 'stream', null, false],
+    ],
+  );
+  assert.equal(merged[0].text, 'Trailer', 'the link text is kept');
 });

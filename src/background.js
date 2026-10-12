@@ -1,4 +1,4 @@
-import { collectLinks, prepareLinks } from './sniff.js';
+import { collectLinks, prepareLinks, mergeMedia } from './sniff.js';
 import { addMedia, sizeFrom, header } from './media.js';
 import { sanitizeFilename } from './http.js';
 
@@ -104,8 +104,9 @@ async function sniffPage(tab) {
   } catch (err) {
     console.warn('sniff failed', err); // e.g. chrome:// pages
   }
+  const links = mergeMedia(prepareLinks(raw), await mediaList(tab.id));
   await chrome.storage.session.set({
-    sniff: { pageUrl: tab.url, title: tab.title, links: prepareLinks(raw), at: Date.now() },
+    sniff: { pageUrl: tab.url, title: tab.title, links, at: Date.now() },
   });
   await openManager('?sniff=1');
 }
@@ -389,7 +390,20 @@ function urlFilterFor(url) {
   return /[*^|]/.test(clean) ? null : `|${clean}|`;
 }
 
-async function setRequestHeaders({ id, urls, domains = [], referrer, pages = false }) {
+// Rule changes read and rewrite one shared id map: run them one at a time, or
+// two at once (a panel closing while a download starts) lose each other's rules.
+let rulesQueue = Promise.resolve();
+function serially(fn) {
+  return (...args) => {
+    const run = rulesQueue.then(() => fn(...args));
+    rulesQueue = run.catch(() => {});
+    return run;
+  };
+}
+const setRequestHeaders = serially(setRequestHeadersNow);
+const clearRequestHeaders = serially(clearRequestHeadersNow);
+
+async function setRequestHeadersNow({ id, urls, domains = [], referrer, pages = false }) {
   if (!referrer || !/^https?:/i.test(referrer)) return { ok: true };
   const { [RULE_IDS_KEY]: map = {} } = await chrome.storage.session.get(RULE_IDS_KEY);
   const used = new Set(Object.values(map).flat());
@@ -427,7 +441,7 @@ async function setRequestHeaders({ id, urls, domains = [], referrer, pages = fal
   return { ok: true };
 }
 
-async function clearRequestHeaders(id) {
+async function clearRequestHeadersNow(id) {
   const { [RULE_IDS_KEY]: map = {} } = await chrome.storage.session.get(RULE_IDS_KEY);
   if (!map[id]) return {};
   await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: map[id] });

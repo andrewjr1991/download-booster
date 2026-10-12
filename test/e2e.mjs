@@ -313,6 +313,56 @@ await check('sniffing a page lists its files and downloads the picked ones with 
   return `chips ${chips.join(' ')}, 1 file picked, ${ours.length} requests with Referer`;
 });
 
+async function sniffInManager(url) {
+  const p = await ctx.newPage();
+  await p.goto(url);
+  await sleep(1500); // let the page load its media
+  await sw.evaluate(async (u) => {
+    const [tab] = await chrome.tabs.query({ url: u });
+    await sniffPage(tab);
+  }, url);
+  await page.waitForURL(/sniff=1/);
+  await page.waitForSelector('#sniff:not([hidden]) #sniff-list li');
+  const chips = await page.$$eval('#sniff-filters button', (bs) => bs.map((b) => `${b.dataset.cat}:${b.getAttribute('aria-pressed')}`));
+  return { p, chips };
+}
+
+await check('manager sniff list includes the audio and images the page loaded, with previews', async () => {
+  const { p, chips } = await sniffInManager(`${srv.url}/media2`);
+  if (!chips.includes('audio:true') || !chips.includes('image:false')) throw new Error(`chips ${JSON.stringify(chips)}`);
+  const audioRow = await page.textContent('#sniff-list li');
+  if (!audioRow.includes('tone.wav') || !/KB/.test(audioRow)) throw new Error(`audio row "${audioRow}"`);
+  await page.click('#sniff-filters button[data-cat="image"]');
+  // The thumbnail of the hotlink-protected picture loads with the page's Referer.
+  await page.waitForFunction(() => document.querySelector('#sniff-list .lthumb')?.naturalWidth === 200, null, { timeout: 10000 });
+  const imgRow = await page.$('#sniff-list li:has(.lthumb)');
+  await (await imgRow.$('.lpreview')).click();
+  await page.waitForFunction(() => document.querySelector('#sp-info').textContent.includes('200×150'), null, { timeout: 10000 });
+  const info = await page.textContent('#sp-info');
+  await page.click('#sp-close');
+  await page.click('#sniff-close');
+  await p.close();
+  return `chips ${chips.join(' ')}, audio row "${audioRow.trim()}", image preview "${info}"`;
+});
+
+await check('manager sniff list downloads a page’s m3u8 as one joined video', async () => {
+  const before = (await engine('list')).tasks.map((t) => t.id);
+  const { p, chips } = await sniffInManager(`${srv.url}/hlspage`);
+  if (!chips.includes('stream:true')) throw new Error(`chips ${JSON.stringify(chips)}`);
+  await page.click('#sniff-go');
+  let task;
+  for (let i = 0; i < 20 && !task; i++) {
+    await sleep(250);
+    task = (await engine('list')).tasks.find((t) => !before.includes(t.id));
+  }
+  if (!task || task.kind !== 'hls') throw new Error(`added ${JSON.stringify(task && task.kind)}`);
+  const done = await waitTask(task.id, (t) => t.status === 'completed', 60000);
+  const { hash } = await savedFileHash(done.downloadId);
+  if (hash !== srv.hlsSha256) throw new Error('joined file differs from the original');
+  await p.close();
+  return `chips ${chips.join(' ')}, saved ${done.filename}`;
+});
+
 await check('speed limit: all tasks together stay under it, and lifting it speeds up', async () => {
   const LIMIT = 1.5 * 1048576;
   await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6, speedLimitMB: 1.5 });

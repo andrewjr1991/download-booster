@@ -9,8 +9,9 @@ export const CATEGORIES = {
   disk: ['iso', 'img', 'bin', 'vhd', 'vhdx', 'vmdk', 'qcow2'],
   document: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'epub', 'mobi', 'csv', 'txt'],
   image: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'tif', 'tiff', 'heic'],
+  stream: ['m3u8'],
 };
-export const CATEGORY_ORDER = ['video', 'audio', 'archive', 'program', 'disk', 'document', 'image', 'other'];
+export const CATEGORY_ORDER = ['video', 'audio', 'stream', 'archive', 'program', 'disk', 'document', 'image', 'other'];
 
 const BY_EXT = new Map(Object.entries(CATEGORIES).flatMap(([cat, exts]) => exts.map((e) => [e, cat])));
 
@@ -41,6 +42,22 @@ export function prepareLinks(raw) {
     out.push({ url: key, text: (text || '').trim().slice(0, 200), category: categorize(key) });
   }
   return out;
+}
+
+// Put the media the page actually loaded (media.js, seen on the network: often
+// with no link on the page at all) in front of the page's links. They carry
+// their kind and size; a link to the same address is folded into it.
+export function mergeMedia(links, media) {
+  const rest = new Map(links.map((l) => [l.url, l]));
+  const found = [];
+  for (const m of media) {
+    if (m.kind === 'stream' && extensionOf(m.url) !== 'm3u8') continue; // DASH .mpd can't be downloaded yet
+    const link = rest.get(m.url);
+    rest.delete(m.url);
+    found.push({ url: m.url, text: link?.text || m.name || '', category: m.kind, size: m.size || null, media: true });
+  }
+  found.sort((a, b) => (b.size || 0) - (a.size || 0));
+  return [...found, ...rest.values()];
 }
 
 // Split pasted text into http(s) URLs (one per line, or separated by spaces).
