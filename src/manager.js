@@ -7,6 +7,8 @@ document.documentElement.lang = chrome.i18n.getUILanguage();
 
 const $ = (sel) => document.querySelector(sel);
 const cards = new Map(); // task id -> card element
+// Open manager.html?debug to see protocol and per-level measurements.
+const DEBUG = new URLSearchParams(location.search).has('debug');
 
 function engine(cmd, args = {}) {
   return chrome.runtime.sendMessage({ type: 'engine', cmd, ...args });
@@ -121,9 +123,10 @@ function compareLine(task) {
   return task.status === 'completed' ? t('avgSpeed', [speed(avg)]) : '';
 }
 
-// What the adaptive controller measured at each connection count, so a
-// user can see why it settled where it did.
+// What the adaptive controller measured at each connection count (debug
+// view only), to see why it settled where it did.
 function levelsLine(task) {
+  if (!DEBUG) return '';
   const levels = Object.entries(task.stats?.levels || {}).sort((a, b) => a[0] - b[0]);
   const parts = [];
   const proto = { h2: 'HTTP/2', h3: 'HTTP/3', 'http/1.1': 'HTTP/1.1' }[task.protocol];
