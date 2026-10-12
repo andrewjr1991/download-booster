@@ -19,6 +19,10 @@
         <textarea id="url" rows="1" required data-i18n-placeholder="addPlaceholder" autocomplete="off" spellcheck="false"></textarea>
         <button type="submit" class="primary" data-i18n="addButton">Download</button>
       </form>
+      <div class="when">
+        <label><input type="checkbox" id="later" /> <span data-i18n="startLater"></span></label>
+        <input type="datetime-local" id="startAt" disabled />
+      </div>
       <p id="add-msg" class="hint" hidden></p>
       <p id="total" class="hint"></p>
 

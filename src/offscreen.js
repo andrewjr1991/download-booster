@@ -31,6 +31,7 @@ async function init() {
     if (t.status === 'downloading') t.status = 'queued';
     else if (t.status === 'saving') save(t);
   }
+  wakeForSchedule();
   pump();
   broadcast();
 }
@@ -60,7 +61,16 @@ async function handle(msg) {
       return { ok: true };
     case 'pause':
       if (t && workers.has(t.id)) workers.get(t.id).postMessage({ type: 'pause' });
-      else if (t?.status === 'queued') setStatus(t, 'paused');
+      else if (t?.status === 'queued' || t?.status === 'scheduled') {
+        t.startAt = null;
+        setStatus(t, 'paused');
+      }
+      return { ok: true };
+    case 'start-now':
+      if (t?.status === 'scheduled') {
+        t.startAt = null;
+        enqueue(t);
+      }
       return { ok: true };
     case 'resume':
       if (t && (t.status === 'paused' || t.status === 'error')) {
@@ -86,7 +96,7 @@ async function handle(msg) {
   }
 }
 
-async function add({ url, filename, takeover, maxConnections, source, referrer }) {
+async function add({ url, filename, takeover, maxConnections, source, referrer, startAt }) {
   const id = crypto.randomUUID();
   const t = {
     id,
@@ -108,12 +118,20 @@ async function add({ url, filename, takeover, maxConnections, source, referrer }
     maxConnections: maxConnections || 6,
     source: source || 'manual',
     referrer: referrer || null,
+    startAt: !takeover && startAt > Date.now() ? startAt : null,
     createdAt: Date.now(),
     finishedAt: null,
     downloadId: null,
   };
   tasks.set(id, t);
 
+  if (t.startAt) {
+    t.status = 'scheduled';
+    await db.put(t);
+    wakeForSchedule();
+    broadcast();
+    return { accepted: true, id };
+  }
   if (!takeover) {
     await db.put(t);
     enqueue(t);
@@ -175,6 +193,23 @@ function shareSpeedLimit() {
 function enqueue(t) {
   if (workers.size < maxActive) return startWorker(t);
   setStatus(t, 'queued');
+}
+
+// Scheduled tasks whose time has come join the queue.
+let scheduleTimer = null;
+function wakeForSchedule() {
+  clearTimeout(scheduleTimer);
+  const now = Date.now();
+  let next = Infinity;
+  for (const t of tasks.values()) {
+    if (t.status !== 'scheduled') continue;
+    if (t.startAt <= now) {
+      t.startAt = null;
+      setStatus(t, 'queued');
+    } else next = Math.min(next, t.startAt);
+  }
+  // Re-check at least every minute: timers drift while the computer sleeps.
+  if (next < Infinity) scheduleTimer = setTimeout(() => (wakeForSchedule(), pump()), Math.min(next - now, 60000));
 }
 
 // Start queued tasks, oldest first, while there are free slots.
@@ -422,6 +457,7 @@ function summaries() {
       controller: t.controller,
       stats: t.stats,
       createdAt: t.createdAt,
+      startAt: t.startAt,
       finishedAt: t.finishedAt,
       downloadId: t.downloadId,
     }));

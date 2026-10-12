@@ -277,3 +277,26 @@ textarea {
 #total:empty {
   display: none;
 }
+
+.when {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.when input[type='datetime-local'] {
+  font: inherit;
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+.when input:disabled {
+  opacity: 0.5;
+}
+.status[data-s='scheduled'] {
+  color: var(--accent);
+}

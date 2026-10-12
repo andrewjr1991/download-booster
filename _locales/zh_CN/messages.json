@@ -190,5 +190,17 @@
   },
   "limitedTo": {
     "message": "限速 $1"
+  },
+  "startLater": {
+    "message": "定时开始"
+  },
+  "statusScheduled": {
+    "message": "定时 $1 开始"
+  },
+  "startNow": {
+    "message": "立即开始"
+  },
+  "startAtPast": {
+    "message": "开始时间已经过了。"
   }
 }

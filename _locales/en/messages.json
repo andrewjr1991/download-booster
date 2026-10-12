@@ -190,5 +190,17 @@
   },
   "limitedTo": {
     "message": "limited to $1"
+  },
+  "startLater": {
+    "message": "Start later"
+  },
+  "statusScheduled": {
+    "message": "Starts $1"
+  },
+  "startNow": {
+    "message": "Start now"
+  },
+  "startAtPast": {
+    "message": "That start time has already passed."
   }
 }

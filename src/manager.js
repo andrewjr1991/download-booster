@@ -40,8 +40,18 @@ function duration(sec) {
   return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
 }
 
+// "02:00" today, otherwise with the date.
+function when(ms) {
+  const d = new Date(ms);
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return d.toDateString() === new Date().toDateString()
+    ? time
+    : `${d.toLocaleDateString([], { month: 'numeric', day: 'numeric' })} ${time}`;
+}
+
 const STATUS = {
   queued: 'statusQueued',
+  scheduled: 'statusScheduled',
   downloading: 'statusDownloading',
   paused: 'statusPaused',
   saving: 'statusSaving',
@@ -101,7 +111,9 @@ function updateCard(card, task) {
   status.textContent =
     task.status === 'error' && task.error
       ? `${t('statusError')}: ${t(ERRORS[task.error.code] || 'errEngine')}`
-      : t(STATUS[task.status] || 'statusQueued');
+      : task.status === 'scheduled'
+        ? t('statusScheduled', [when(task.startAt)])
+        : t(STATUS[task.status] || 'statusQueued');
   status.title = task.error?.message || '';
 
   drawBar(card.querySelector('.bar'), task);
@@ -150,6 +162,7 @@ function levelsLine(task) {
 
 function renderActions(box, task) {
   const wanted = [];
+  if (task.status === 'scheduled') wanted.push(['startNow', 'start-now'], ['cancel', 'cancel']);
   if (task.status === 'downloading' || task.status === 'queued') wanted.push(['pause', 'pause'], ['cancel', 'cancel']);
   if (task.status === 'paused') wanted.push(['resume', 'resume'], ['cancel', 'cancel']);
   if (task.status === 'error') wanted.push(['retry', 'resume'], ['remove', 'remove']);
@@ -225,7 +238,16 @@ chrome.runtime.onMessage.addListener((msg) => {
   return false;
 });
 
+// The "start later" time, or null to start now. Throws if it has passed.
+function startAt() {
+  if (!$('#later').checked) return null;
+  const at = new Date($('#startAt').value).getTime();
+  if (!(at > Date.now())) throw new Error(t('startAtPast'));
+  return at;
+}
+
 async function addUrls(urls, extra = {}) {
+  const at = startAt();
   const { settings } = await chrome.storage.local.get('settings');
   const s = { ...DEFAULT_SETTINGS, ...settings };
   for (const url of urls) {
@@ -235,9 +257,13 @@ async function addUrls(urls, extra = {}) {
       maxConnections: s.maxConnections,
       maxActive: s.maxActive,
       speedLimit: s.speedLimitMB * MB,
+      startAt: at,
       ...extra,
     });
   }
+  // One-off: the next links start right away again unless asked otherwise.
+  $('#later').checked = false;
+  $('#startAt').disabled = true;
   refresh();
 }
 
@@ -252,7 +278,11 @@ $('#add').addEventListener('submit', async (e) => {
   e.preventDefault();
   const urls = parsePastedUrls($('#url').value);
   if (!urls.length) return note(t('invalidUrl'));
-  await addUrls(urls);
+  try {
+    await addUrls(urls);
+  } catch (err) {
+    return note(err.message);
+  }
   $('#url').value = '';
   fitUrlBox();
   note(urls.length > 1 ? t('addedCount', [String(urls.length)]) : '');
@@ -270,6 +300,22 @@ function fitUrlBox() {
   box.rows = Math.min(8, Math.max(1, box.value.split('\n').length));
 }
 $('#url').addEventListener('input', fitUrlBox);
+
+// Start later: defaults to the coming 2 a.m., when the line is usually idle.
+function localInputValue(d) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+$('#later').addEventListener('change', () => {
+  const on = $('#later').checked;
+  $('#startAt').disabled = !on;
+  if (on && !$('#startAt').value) {
+    const d = new Date();
+    d.setHours(2, 0, 0, 0);
+    if (d <= new Date()) d.setDate(d.getDate() + 1);
+    $('#startAt').value = localInputValue(d);
+  }
+});
 
 // ---- links sniffed from a page ------------------------------------------------------
 
@@ -415,7 +461,11 @@ $('#sniff-go').addEventListener('click', async () => {
   const urls = selectedLinks().map((l) => l.url);
   if (!urls.length) return;
   // Sent with the page as Referer, as a click on the page would.
-  await addUrls(urls, { source: 'sniff', referrer: sniff.pageUrl });
+  try {
+    await addUrls(urls, { source: 'sniff', referrer: sniff.pageUrl });
+  } catch (err) {
+    return note(err.message);
+  }
   closeSniff();
   note(t('addedCount', [String(urls.length)]));
 });

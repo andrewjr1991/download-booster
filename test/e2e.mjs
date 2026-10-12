@@ -339,6 +339,39 @@ await check('speed limit: all tasks together stay under it, and lifting it speed
   return `2 tasks limited to 1.5 MB/s: ${mbps(limited, 1000)}; unlimited: ${mbps(free, 1000)}`;
 });
 
+await check('scheduled download waits for its time; "start now" skips the wait', async () => {
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6 });
+  const mark = srv.log.length;
+  const at = Date.now() + 5000;
+  const { id } = await engine('add', { url: `${srv.url}/file.bin?at=1`, maxConnections: 6, startAt: at });
+  await sleep(2000);
+  const early = (await engine('list')).tasks.find((t) => t.id === id);
+  if (early.status !== 'scheduled') throw new Error(`status ${early.status} before its time`);
+  if (srv.log.slice(mark).some((l) => l.path === '/file.bin')) throw new Error('requested before its time');
+  await waitTask(id, (t) => t.status === 'downloading' || t.status === 'completed', 15000);
+  const lateBy = Date.now() - at;
+  await waitTask(id, (t) => t.status === 'completed');
+
+  // Through the page: tick "start later", add, then press "start now".
+  await page.check('#later');
+  const value = await page.inputValue('#startAt');
+  if (!/T02:00$/.test(value)) throw new Error(`default time ${value}`);
+  const before = (await engine('list')).tasks.map((t) => t.id);
+  await page.fill('#url', `${srv.url}/file.bin?at=2`);
+  await page.press('#url', 'Enter');
+  let task;
+  for (let i = 0; i < 20 && !task; i++) {
+    await sleep(250);
+    task = (await engine('list')).tasks.find((t) => !before.includes(t.id));
+  }
+  if (task?.status !== 'scheduled') throw new Error(`added as ${task?.status}`);
+  const label = await page.locator('.task .status[data-s="scheduled"]').first().textContent();
+  await page.locator('.task .actions button').first().click(); // start now
+  await waitTask(task.id, (t) => t.status === 'completed');
+  if (await page.isChecked('#later')) throw new Error('"start later" stayed on');
+  return `started ${lateBy} ms after its time; page showed "${label}", start now worked`;
+});
+
 await check('small files are left to the browser', async () => {
   await setSettings({ autoTakeover: true, minSizeMB: SIZE_MB + 1, maxConnections: 6 });
   const before = (await engine('list')).tasks.map((t) => t.id);
