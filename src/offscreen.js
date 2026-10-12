@@ -62,8 +62,12 @@ async function handle(msg) {
       if (t && workers.has(t.id)) workers.get(t.id).postMessage({ type: 'pause' });
       else if (t?.status === 'queued') setStatus(t, 'paused');
       return { ok: true };
+    case 'import':
+      return importFile(msg);
     case 'resume':
-      if (t && (t.status === 'paused' || t.status === 'error')) {
+      // A recording is already complete: only saving it can be retried.
+      if (t?.kind === 'record' && t.status === 'error') await save(t);
+      else if (t && (t.status === 'paused' || t.status === 'error')) {
         if (!t.rangeSupported) t.segments = null; // no ranges: start over
         enqueue(t);
       }
@@ -314,6 +318,40 @@ async function onWorkerMessage(t, m) {
       break;
   }
   broadcast();
+}
+
+// A file made elsewhere in the extension (a recording) that is already in
+// OPFS: list it and save it like a finished download.
+async function importFile({ opfsName, size, filename, referrer }) {
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  const t = {
+    id,
+    url: referrer || '',
+    filename,
+    size,
+    downloaded: size,
+    rangeSupported: false,
+    opfsName,
+    segments: null,
+    status: 'saving',
+    error: null,
+    speed: 0,
+    connections: 0,
+    stats: null,
+    controller: null,
+    source: 'record',
+    referrer: null,
+    kind: 'record',
+    hls: null,
+    createdAt: now,
+    finishedAt: now,
+    downloadId: null,
+  };
+  tasks.set(id, t);
+  await save(t);
+  broadcast();
+  return { id };
 }
 
 // Hand the finished OPFS file to chrome.downloads (via the background, since

@@ -5,6 +5,8 @@ import { parseContentRange, filenameFromDisposition, sanitizeFilename, pickFilen
 import { categorize, extensionOf, prepareLinks, parsePastedUrls } from '../src/sniff.js';
 import { classify, sizeFrom, mediaKey, addMedia } from '../src/media.js';
 import { parsePlaylist, ivFor, variantLabel } from '../src/hls.js';
+import { Mp4Stream, mux, canJoin, children, parseMoov } from '../src/fmp4.js';
+import { readFileSync } from 'node:fs';
 
 test('parseContentRange', () => {
   assert.deepEqual(parseContentRange('bytes 0-99/1000'), { start: 0, end: 100, total: 1000 });
@@ -280,4 +282,39 @@ test('HLS playlists: variants, segments, keys, byte ranges', () => {
   const drm = parsePlaylist('#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES,URI="skd://x"\n#EXTINF:4,\na.ts\n#EXT-X-ENDLIST', 'https://x/');
   assert.ok(drm.drm);
   assert.throws(() => parsePlaylist('<html>', 'https://x/'));
+});
+
+test('recorded fMP4: chunks, repeats and two tracks become one file', () => {
+  const feed = (file) => {
+    const s = new Mp4Stream();
+    const b = new Uint8Array(readFileSync(new URL(`./fixtures/${file}`, import.meta.url)));
+    // Odd-sized pieces, as a player might append them.
+    for (let at = 0; at < b.length; at += 7001) s.push(b.subarray(at, at + 7001));
+    // A seek back: the init section and the first fragment arrive again.
+    const top = children(b);
+    s.push(b.subarray(0, top[3].end));
+    return s;
+  };
+  const video = feed('video.mp4').settle();
+  const audio = feed('audio.mp4').settle();
+  assert.equal(video.switched, false);
+  const times = video.fragments.map((f) => f.time);
+  assert.deepEqual(times, [...new Set(times)].sort((x, y) => x - y), 'in order, no repeats');
+  assert.equal(times.length, 4);
+  assert.ok(canJoin([audio, video]));
+
+  const parts = mux([audio, video]);
+  const out = new Uint8Array(parts.reduce((s, p) => s + p.length, 0));
+  parts.reduce((at, p) => (out.set(p, at), at + p.length), 0);
+  const top = children(out);
+  const moov = top.find((b) => b.type === 'moov');
+  const info = parseMoov(out.slice(moov.start, moov.end));
+  assert.deepEqual(info.tracks.map((t) => [t.id, t.handler]), [[1, 'vide'], [2, 'soun']]);
+  const moofs = top.filter((b) => b.type === 'moof');
+  assert.equal(moofs.length, video.fragments.length + audio.fragments.length);
+  // Sequence numbers run 1, 2, 3...
+  assert.deepEqual(
+    moofs.map((m) => new DataView(out.buffer, m.start + 20, 4).getUint32(0)),
+    moofs.map((_, i) => i + 1),
+  );
 });

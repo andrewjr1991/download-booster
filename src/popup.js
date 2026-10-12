@@ -533,6 +533,118 @@ chrome.runtime.onMessage.addListener((msg) => {
   return false;
 });
 
+// ---- recording blob: videos ------------------------------------------------------
+// Players that build the video in the page (MediaSource) show a blob: URL
+// that can't be downloaded. Recording reloads the page with a hook that keeps
+// a copy of what the player loads; see record-*.js.
+
+const rec = { active: false, blobs: 0, drm: 0, status: null, timer: null };
+$('#record .rec-icon').innerHTML = ICONS.record;
+$('#rec-title').textContent = t('recordTitle');
+
+async function inFrames(func) {
+  try {
+    const results = await chrome.scripting.executeScript({ target: { tabId: state.tab.id, allFrames: true }, func });
+    return results.map((r) => r.result).filter((x) => x != null);
+  } catch {
+    return []; // chrome:// pages, the web store...
+  }
+}
+
+// [blob: media, of which DRM-protected] in each frame.
+const blobCount = () =>
+  inFrames(() => {
+    const list = [...document.querySelectorAll('video, audio')].filter((v) => v.currentSrc.startsWith('blob:'));
+    return [list.length, list.filter((v) => v.mediaKeys).length];
+  });
+
+// Out of scope by design (store policy): no recording on YouTube.
+const NO_RECORD = /(^|\.)(youtube\.com|youtube-nocookie\.com)$/i;
+
+async function recStatus() {
+  const all = await inFrames(() => globalThis.__downloadBoosterRec?.status() ?? null);
+  return all.reduce(
+    (s, x) => ({
+      bytes: s.bytes + x.bytes,
+      loaded: Math.max(s.loaded, x.loaded),
+      duration: Math.max(s.duration, x.duration || 0),
+      saving: s.saving + x.saving,
+      saved: s.saved + x.saved,
+    }),
+    { bytes: 0, loaded: 0, duration: 0, saving: 0, saved: 0 },
+  );
+}
+
+const clock = (sec) => {
+  const s = Math.floor(sec || 0);
+  const pad = (n) => String(n).padStart(2, '0');
+  return s >= 3600 ? `${Math.floor(s / 3600)}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}` : `${Math.floor(s / 60)}:${pad(s % 60)}`;
+};
+
+function renderRecord() {
+  const box = $('#record');
+  const show = rec.active || rec.blobs > 0;
+  box.hidden = !show;
+  if (!show) return;
+  box.dataset.state = rec.active ? 'on' : 'off';
+  const go = $('#rec-go');
+  go.replaceChildren();
+  go.insertAdjacentHTML('afterbegin', rec.active ? ICONS.stop : ICONS.record);
+  go.append(t(rec.active ? 'recordStop' : 'recordStart'));
+  const st = rec.status;
+  const drm = !rec.active && rec.drm >= rec.blobs;
+  go.hidden = drm;
+  $('#rec-fast-label').hidden = rec.active || drm;
+  if (!rec.active) {
+    $('#rec-sub').textContent = '';
+    $('#rec-hint').textContent = t(drm ? 'recordDrm' : 'recordHint');
+  } else {
+    const loaded = st?.duration ? `${clock(st.loaded)} / ${clock(st.duration)}` : clock(st?.loaded);
+    $('#rec-sub').textContent = `${t('recording')} · ${t('recordProgress', [bytes(st?.bytes || 0), loaded])}`;
+    $('#rec-hint').textContent = st?.saved ? t('recordSaved', [String(st.saved)]) : st?.bytes ? '' : t('recordPlay');
+  }
+}
+
+async function refreshRecord() {
+  if (!/^https?:/i.test(state.tab?.url || '') || NO_RECORD.test(new URL(state.tab.url).hostname)) return;
+  const was = rec.active;
+  rec.active = !!(await chrome.runtime.sendMessage({ type: 'record-state', tabId: state.tab.id }))?.active;
+  if (rec.active) rec.status = await recStatus();
+  else [rec.blobs, rec.drm] = (await blobCount()).reduce(([a, b], [x, y]) => [a + x, b + y], [0, 0]);
+  // The player finished and everything was saved on its own.
+  if (was && !rec.active) {
+    toast(t('recordSaved', [String(rec.status?.saved || 1)]));
+    showView('tasks');
+  }
+  renderRecord();
+  $('#media-empty').hidden = state.media.length > 0 || !$('#record').hidden;
+}
+
+$('#rec-go').onclick = async () => {
+  const go = $('#rec-go');
+  go.disabled = true;
+  try {
+    if (!rec.active) {
+      await chrome.runtime.sendMessage({ type: 'record-start', tabId: state.tab.id, fast: $('#rec-fast').checked });
+      rec.active = true;
+      rec.status = null;
+      renderRecord();
+      return;
+    }
+    $('#rec-hint').textContent = t('recordSaving');
+    const done = await inFrames(() => globalThis.__downloadBoosterRec?.stop() ?? null);
+    await chrome.runtime.sendMessage({ type: 'record-end', tabId: state.tab.id });
+    rec.active = false;
+    const saved = done.reduce((n, x) => n + x.saved, 0);
+    toast(saved ? t('recordSaved', [String(saved)]) : t('recordNothing'));
+    if (saved) showView('tasks');
+    rec.status = null;
+    await refreshRecord();
+  } finally {
+    go.disabled = false;
+  }
+};
+
 // ---- footer ----------------------------------------------------------------------
 
 $('#open-manager').onclick = async () => {
@@ -572,6 +684,8 @@ async function init() {
   // Nothing found on this page but downloads are running: show those.
   if (!state.media.length && state.tasks.some((x) => x.status !== 'completed')) showView('tasks');
   $('#sniff-links').disabled = !/^https?:/i.test(state.tab?.url || '');
+  await refreshRecord();
+  rec.timer = setInterval(refreshRecord, 1000);
 }
 init();
 

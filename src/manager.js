@@ -428,5 +428,6 @@ loadSettings().then(async () => {
     speedLimit: (Number($('#speedLimitMB').value) || 0) * MB,
   });
   refresh();
+  document.body.dataset.synced = '1'; // tests wait for this before changing limits
 });
 if (new URLSearchParams(location.search).has('sniff')) openSniff();

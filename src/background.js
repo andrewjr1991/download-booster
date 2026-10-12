@@ -1,5 +1,6 @@
 import { collectLinks, prepareLinks } from './sniff.js';
 import { addMedia, sizeFrom, header } from './media.js';
+import { sanitizeFilename } from './http.js';
 
 // MV3 service worker: only a dispatcher. It can be killed after 30 s idle, so
 // all download work lives in the offscreen document (offscreen.js).
@@ -231,6 +232,82 @@ chrome.webRequest.onResponseStarted.addListener(
 chrome.tabs.onRemoved.addListener((tabId) => {
   mediaByTab.delete(tabId);
   chrome.storage.session.remove(`media:${tabId}`).catch(() => {});
+  endRecording(tabId);
+});
+
+// ---- recording blob: videos ---------------------------------------------------
+// While a tab is being recorded, record-hook.js and record-bridge.js run in
+// every page (they stay idle in other tabs); they are unregistered as soon as
+// no tab is being recorded.
+
+const RECORD_SCRIPTS = [
+  { id: 'rec-hook', js: ['src/record-hook.js'], world: 'MAIN' },
+  { id: 'rec-bridge', js: ['src/record-bridge.js'], world: 'ISOLATED' },
+];
+
+async function recording(tabId) {
+  const key = `rec:${tabId}`;
+  return tabId == null ? null : (await chrome.storage.session.get(key))[key] || null;
+}
+
+async function startRecording(tabId, fast) {
+  const tab = await chrome.tabs.get(tabId);
+  if (/^https?:\/\/([^/]*\.)?(youtube\.com|youtube-nocookie\.com)(:|\/|$)/i.test(tab.url || '')) throw new Error('Not supported on this site');
+  await chrome.storage.session.set({ [`rec:${tabId}`]: { token: crypto.randomUUID(), fast: !!fast, startedAt: Date.now() } });
+  const have = await chrome.scripting.getRegisteredContentScripts({ ids: RECORD_SCRIPTS.map((x) => x.id) });
+  const missing = RECORD_SCRIPTS.filter((x) => !have.some((h) => h.id === x.id));
+  if (missing.length) {
+    await chrome.scripting.registerContentScripts(
+      missing.map((x) => ({
+        ...x,
+        matches: ['<all_urls>'],
+        runAt: 'document_start',
+        allFrames: true,
+        matchOriginAsFallback: true,
+        persistAcrossSessions: false,
+      })),
+    );
+  }
+  // Reload so the player starts over with the hook in place.
+  await chrome.tabs.reload(tabId);
+}
+
+async function endRecording(tabId) {
+  await chrome.storage.session.remove(`rec:${tabId}`);
+  const all = await chrome.storage.session.get(null);
+  if (!Object.keys(all).some((k) => k.startsWith('rec:'))) {
+    await chrome.scripting.unregisterContentScripts({ ids: RECORD_SCRIPTS.map((x) => x.id) }).catch(() => {});
+  }
+}
+
+async function saveRecording(msg, tab) {
+  const rec = await recording(tab?.id);
+  if (!rec || msg.token !== rec.token || !/^[\w-]+\.part$/.test(msg.opfsName)) throw new Error('Not recording');
+  const title = (tab.title || '').trim() || 'video';
+  return engine('import', {
+    opfsName: msg.opfsName,
+    size: msg.size,
+    filename: sanitizeFilename(`${title}.${msg.ext}`),
+    referrer: tab.url,
+  });
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  const reply = (p) => {
+    p.then(sendResponse, (err) => sendResponse({ error: String(err?.message || err) }));
+    return true;
+  };
+  if (msg?.type === 'record-start') return reply(startRecording(msg.tabId, msg.fast).then(() => ({ ok: true })));
+  if (msg?.type === 'record-end') return reply(endRecording(msg.tabId).then(() => ({ ok: true })));
+  if (msg?.type === 'record-state') return reply(recording(msg.tabId).then((rec) => ({ active: !!rec, fast: rec?.fast })));
+  // From the bridge and the sink inside the recorded tab.
+  if (msg?.type === 'record-active') {
+    return reply(recording(sender.tab?.id).then((rec) => (rec ? { active: true, fast: rec.fast, token: rec.token } : { active: false })));
+  }
+  if (msg?.type === 'record-done') return reply(endRecording(sender.tab?.id).then(() => ({ ok: true })));
+  if (msg?.type === 'record-token') return reply(recording(sender.tab?.id).then((rec) => rec?.token || null));
+  if (msg?.type === 'record-save') return reply(saveRecording(msg, sender.tab));
+  return false;
 });
 
 // ---- saving finished files ---------------------------------------------------
