@@ -10,6 +10,7 @@ import {
   totalRemaining,
   downloadedBytes,
   splitLargest,
+  RateLimiter,
 } from './scheduler.js';
 import { parseContentRange, pickFilename, isThrottleStatus } from './http.js';
 
@@ -32,6 +33,7 @@ let task;
 let handle;
 let controller;
 const meter = new SpeedMeter(2000);
+const limiter = new RateLimiter(0); // this task's share of the global speed limit
 const conns = new Map(); // segment id -> {ac, seg}
 const retryAt = new Map(); // segment id -> timestamp before which it waits
 let segments = [];
@@ -58,9 +60,17 @@ const post = (msg) => self.postMessage(msg);
 self.onmessage = (e) => {
   const m = e.data;
   if (m.type === 'start') start(m.task).catch((err) => fail('engine', err));
+  else if (m.type === 'rate') setRate(m.rate);
   else if (m.type === 'pause') stop('stopped');
   else if (m.type === 'cancel') stop('canceled');
 };
+
+function setRate(rate) {
+  const was = limiter.rate;
+  limiter.setRate(rate);
+  // More room than before: look for a better connection count again.
+  if (was && (!limiter.rate || limiter.rate > was * 1.2)) controller?.rethink(Date.now());
+}
 
 async function openFile() {
   const root = await navigator.storage.getDirectory();
@@ -102,6 +112,7 @@ async function detectProtocol() {
 
 async function start(t) {
   task = t;
+  limiter.setRate(task.rate || 0);
   controller = new AdaptiveController({ max: task.rangeSupported === false ? 1 : task.maxConnections || 6 });
   peakSpeed = task.stats?.peakSpeed || 0;
   activeMs = task.stats?.activeMs || 0;
@@ -316,6 +327,8 @@ async function runConn(seg, resp = null, ac = new AbortController(), pool = choo
         handle.write(chunk, { at: seg.pos });
         seg.pos += chunk.byteLength;
         failures = 0;
+        const wait = limiter.take(chunk.byteLength, Date.now());
+        if (wait > 0) await new Promise((r) => setTimeout(r, wait));
       }
       if (seg.pos >= seg.end) {
         // The segment was shortened by a split; drop the rest of the stream.

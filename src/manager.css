@@ -274,3 +274,6 @@ textarea {
 .row input[type='number'] {
   width: 100px;
 }
+#total:empty {
+  display: none;
+}

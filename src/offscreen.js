@@ -13,6 +13,8 @@ const blobUrls = new Map(); // id -> object URL being saved
 // How many tasks download at once; the rest wait as 'queued'. Offscreen
 // documents cannot read chrome.storage, so the pages pass the setting in.
 let maxActive = Number(localStorage.getItem('maxActive')) || 3;
+// Global speed limit in bytes/s (0 = none), split evenly between running tasks.
+let speedLimit = Number(localStorage.getItem('speedLimit')) || 0;
 
 const ready = init();
 
@@ -47,12 +49,14 @@ async function handle(msg) {
     case 'ping':
       return { ok: true };
     case 'list':
-      return { tasks: summaries() };
+      return { tasks: summaries(), speedLimit };
     case 'add':
       setLimit(msg.maxActive);
+      setSpeedLimit(msg.speedLimit);
       return add(msg);
     case 'set-limit':
       setLimit(msg.maxActive);
+      setSpeedLimit(msg.speedLimit);
       return { ok: true };
     case 'pause':
       if (t && workers.has(t.id)) workers.get(t.id).postMessage({ type: 'pause' });
@@ -148,6 +152,26 @@ function setLimit(n) {
   pump();
 }
 
+function setSpeedLimit(bytesPerSec) {
+  if (bytesPerSec === undefined) return;
+  const n = Math.max(0, Math.round(Number(bytesPerSec) || 0));
+  if (n === speedLimit) return;
+  speedLimit = n;
+  localStorage.setItem('speedLimit', String(n));
+  shareSpeedLimit();
+  broadcast();
+}
+
+function rateShare() {
+  return speedLimit ? speedLimit / Math.max(1, workers.size) : 0;
+}
+
+// Hand every running task its share again (a task started or finished).
+function shareSpeedLimit() {
+  const rate = rateShare();
+  for (const w of workers.values()) w.postMessage({ type: 'rate', rate });
+}
+
 function enqueue(t) {
   if (workers.size < maxActive) return startWorker(t);
   setStatus(t, 'queued');
@@ -172,6 +196,7 @@ async function startWorker(t) {
   t.error = null;
   w.onmessage = (e) => onWorkerMessage(t, e.data);
   w.onerror = (e) => onWorkerMessage(t, { type: 'error', code: 'engine', message: e.message });
+  shareSpeedLimit();
   await setRequestHeaders(t);
   if (workers.get(t.id) !== w) return; // paused or removed meanwhile
   w.postMessage({
@@ -189,6 +214,7 @@ async function startWorker(t) {
       maxConnections: t.maxConnections,
       takeover: t.takeover || null,
       stats: t.stats,
+      rate: rateShare(),
     },
   });
   if (!t.takeover) persist(t);
@@ -200,6 +226,7 @@ function endWorker(t) {
   workers.delete(t.id);
   t.speed = 0;
   t.connections = 0;
+  shareSpeedLimit();
   // A slot freed up; start the next task once this message is handled.
   queueMicrotask(pump);
 }
@@ -405,7 +432,7 @@ function broadcast() {
   if (broadcastTimer) return;
   broadcastTimer = setTimeout(() => {
     broadcastTimer = null;
-    chrome.runtime.sendMessage({ type: 'engine-state', tasks: summaries() }).catch(() => {});
+    chrome.runtime.sendMessage({ type: 'engine-state', tasks: summaries(), speedLimit }).catch(() => {});
   }, 250);
 }
 

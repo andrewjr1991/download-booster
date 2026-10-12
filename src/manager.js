@@ -1,7 +1,7 @@
 import { CATEGORY_ORDER, parsePastedUrls } from './sniff.js';
 
 const t = (key, subs) => chrome.i18n.getMessage(key, subs) || key;
-const DEFAULT_SETTINGS = { autoTakeover: true, minSizeMB: 20, maxConnections: 6, maxActive: 3 };
+const DEFAULT_SETTINGS = { autoTakeover: true, minSizeMB: 20, maxConnections: 6, maxActive: 3, speedLimitMB: 0 };
 
 for (const el of document.querySelectorAll('[data-i18n]')) el.textContent = t(el.dataset.i18n);
 for (const el of document.querySelectorAll('[data-i18n-placeholder]')) el.placeholder = t(el.dataset.i18nPlaceholder);
@@ -11,6 +11,7 @@ const $ = (sel) => document.querySelector(sel);
 const cards = new Map(); // task id -> card element
 // Open manager.html?debug to see protocol and per-level measurements.
 const DEBUG = new URLSearchParams(location.search).has('debug');
+const MB = 1024 * 1024;
 
 function engine(cmd, args = {}) {
   return chrome.runtime.sendMessage({ type: 'engine', cmd, ...args });
@@ -58,7 +59,8 @@ const ERRORS = {
 
 // ---- rendering ----------------------------------------------------------------
 
-function render(tasks) {
+function render(tasks, speedLimit = 0) {
+  renderTotal(tasks, speedLimit);
   const seen = new Set();
   const list = $('#tasks');
   tasks.forEach((task, i) => {
@@ -78,6 +80,15 @@ function render(tasks) {
     }
   }
   $('#empty').hidden = tasks.length > 0;
+}
+
+// Combined speed of all running tasks, and the limit when one is set.
+function renderTotal(tasks, speedLimit) {
+  const running = tasks.filter((x) => x.status === 'downloading');
+  const parts = [];
+  if (running.length) parts.push(t('totalSpeed', [speed(running.reduce((sum, x) => sum + (x.speed || 0), 0))]));
+  if (speedLimit > 0) parts.push(t('limitedTo', [speed(speedLimit)]));
+  $('#total').textContent = parts.join(' · ');
 }
 
 function updateCard(card, task) {
@@ -206,11 +217,11 @@ function drawBar(canvas, task) {
 
 async function refresh() {
   const res = await engine('list');
-  if (res?.tasks) render(res.tasks);
+  if (res?.tasks) render(res.tasks, res.speedLimit);
 }
 
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg?.type === 'engine-state') render(msg.tasks);
+  if (msg?.type === 'engine-state') render(msg.tasks, msg.speedLimit);
   return false;
 });
 
@@ -218,7 +229,14 @@ async function addUrls(urls, extra = {}) {
   const { settings } = await chrome.storage.local.get('settings');
   const s = { ...DEFAULT_SETTINGS, ...settings };
   for (const url of urls) {
-    await engine('add', { url, source: 'manual', maxConnections: s.maxConnections, maxActive: s.maxActive, ...extra });
+    await engine('add', {
+      url,
+      source: 'manual',
+      maxConnections: s.maxConnections,
+      maxActive: s.maxActive,
+      speedLimit: s.speedLimitMB * MB,
+      ...extra,
+    });
   }
   refresh();
 }
@@ -416,6 +434,7 @@ async function loadSettings() {
   $('#minSizeMB').value = s.minSizeMB;
   $('#maxConnections').value = s.maxConnections;
   $('#maxActive').value = s.maxActive;
+  $('#speedLimitMB').value = s.speedLimitMB || '';
 }
 
 async function saveSettings() {
@@ -425,15 +444,21 @@ async function saveSettings() {
     minSizeMB: clamp(Number($('#minSizeMB').value), 1, 100000, DEFAULT_SETTINGS.minSizeMB),
     maxConnections: clamp(Number($('#maxConnections').value), 1, 16, DEFAULT_SETTINGS.maxConnections),
     maxActive: clamp(Number($('#maxActive').value), 1, 10, DEFAULT_SETTINGS.maxActive),
+    // Empty or 0 means no limit; tenths of a MB/s are allowed.
+    speedLimitMB: Math.min(100000, Math.max(0, Math.round(Number($('#speedLimitMB').value) * 10) / 10 || 0)),
   };
   await chrome.storage.local.set({ settings });
-  await engine('set-limit', { maxActive: settings.maxActive });
+  await engine('set-limit', { maxActive: settings.maxActive, speedLimit: settings.speedLimitMB * MB });
+  refresh();
 }
-for (const id of ['autoTakeover', 'minSizeMB', 'maxConnections', 'maxActive']) $('#' + id).addEventListener('change', saveSettings);
+for (const id of ['autoTakeover', 'minSizeMB', 'maxConnections', 'maxActive', 'speedLimitMB']) $('#' + id).addEventListener('change', saveSettings);
 
 loadSettings().then(async () => {
   // Keep the engine's queue limit in step with the saved setting.
-  await engine('set-limit', { maxActive: Number($('#maxActive').value) });
+  await engine('set-limit', {
+    maxActive: Number($('#maxActive').value),
+    speedLimit: (Number($('#speedLimitMB').value) || 0) * MB,
+  });
   refresh();
 });
 if (new URLSearchParams(location.search).has('sniff')) openSniff();
