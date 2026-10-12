@@ -592,11 +592,15 @@ async function showFolder() {
 
 $('#folder-choose').addEventListener('click', async () => {
   if (!window.showDirectoryPicker) return note(t('folderUnsupported'));
+  // Chrome refuses the Downloads, Desktop and Documents folders themselves
+  // ("contains system files"), but not the folders inside them.
+  $('#folder-hint').textContent = t('folderPickSub');
   try {
     const dir = await window.showDirectoryPicker({ id: 'downloads', mode: 'readwrite', startIn: 'downloads' });
     await setFolder(dir);
   } catch (err) {
-    if (err?.name !== 'AbortError') note(String(err?.message || err));
+    if (err?.name === 'AbortError') return; // keep the hint up: likely refused
+    note(String(err?.message || err));
   }
   showFolder();
 });

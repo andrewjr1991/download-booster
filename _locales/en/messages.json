@@ -351,7 +351,7 @@
     "message": "The browser’s download folder"
   },
   "folderHintDefault": {
-    "message": "Files are first put together in the browser’s storage and then saved, so a large file briefly takes twice its size on disk. Pick a folder to have files written straight into it."
+    "message": "Files are first put together in the browser’s storage and then saved, so a large file briefly takes twice its size on disk. Pick a folder to have files written straight into it (a folder inside Downloads, e.g. Downloads/Download Booster: Chrome doesn’t allow Downloads itself)."
   },
   "folderHintOn": {
     "message": "Files are written straight into this folder while they download (as “name.part” until done). Pausing saves the progress; after a browser crash a file continues from its last pause."
@@ -428,5 +428,8 @@
   },
   "errChecksum": {
     "message": "the file does not match the checksum (retry downloads it again)"
+  },
+  "folderPickSub": {
+    "message": "Chrome won’t let extensions use the Downloads, Desktop or Documents folder itself. Open it and pick or create a folder inside it, e.g. Downloads/Download Booster."
   }
 }

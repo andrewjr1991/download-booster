@@ -21,13 +21,15 @@ function nextId(segments) {
 }
 
 // Dynamic segmentation: carve the second half off the active segment with the
-// most bytes left. The running connection keeps the first half and stops at
-// the new end; the returned segment is for a new connection.
-export function splitLargest(segments, activeIds, minSplit = MIN_SPLIT) {
+// most bytes left (or, given `score`, the one that will take longest: a big
+// piece on a fast connection finishes before a small one on a slow
+// connection). The running connection keeps the first half and stops at the
+// new end; the returned segment is for a new connection.
+export function splitLargest(segments, activeIds, minSplit = MIN_SPLIT, score = remaining) {
   let best = null;
   for (const s of segments) {
     if (!activeIds.has(s.id) || remaining(s) < 2 * minSplit) continue;
-    if (!best || remaining(s) > remaining(best)) best = s;
+    if (!best || score(s) > score(best)) best = s;
   }
   if (!best) return null;
   const mid = best.pos + Math.floor(remaining(best) / 2);
@@ -59,6 +61,8 @@ export class AdaptiveController {
     rampTimeoutMs = 10000,
     gain = 1.12,
     dropTolerance = 0.95,
+    collapse = 0.3,
+    collapseMs = 8000,
     downProbeMs = 60000,
     reprobeMs = 20000,
     cooldownMs = 30000,
@@ -69,6 +73,10 @@ export class AdaptiveController {
     this.rampTimeoutMs = rampTimeoutMs;
     this.gain = gain;
     this.dropTolerance = dropTolerance;
+    this.collapse = collapse;
+    this.collapseMs = collapseMs;
+    this.limited = false; // a speed limit holds the speed down on purpose
+    this.lowSince = null;
     this.downProbeMs = downProbeMs;
     this.downFrom = null;
     this.nextDownAt = null;
@@ -115,6 +123,11 @@ export class AdaptiveController {
       } else if (now - this.measureStart >= this.measureMs) {
         this.#judge(now, ((bytes - this.measureBytes) * 1000) / (now - this.measureStart));
       }
+    } else if (this.#collapsed(now)) {
+      // The speed fell far below what this level measured (the fast
+      // connections finished their pieces, or the server changed): measure
+      // again and climb from here instead of one connection per reprobeMs.
+      this.rethink(now);
     } else if (streaming >= this.target) {
       // stable: re-check against the recent average, one connection more
       // every `reprobeMs` and one fewer less often. Speeds drift during a
@@ -185,6 +198,21 @@ export class AdaptiveController {
     this.best = this.target;
     this.phase = 'stable';
     this.nextProbeAt = now + wait;
+  }
+
+  #collapsed(now) {
+    if (this.limited || !this.baseline || this.samples.length < 2 || now - this.samples[0][0] < this.measureMs * 0.8) {
+      this.lowSince = null;
+      return false;
+    }
+    if (this.#rollingSpeed() >= this.baseline * this.collapse) {
+      this.lowSince = null;
+      return false;
+    }
+    this.lowSince ??= now;
+    if (now - this.lowSince < this.collapseMs) return false;
+    this.lowSince = null;
+    return true;
   }
 
   #rollingSpeed() {
