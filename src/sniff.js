@@ -26,12 +26,15 @@ export function extensionOf(url) {
 }
 
 // 'other' means no recognised file extension (often an ordinary web page).
-export function categorize(url) {
-  return BY_EXT.get(extensionOf(url)) || 'other';
+// `extra` maps the user's own extensions to a category (sniffing rules).
+export function categorize(url, extra) {
+  const ext = extensionOf(url);
+  return extra?.get(ext) || BY_EXT.get(ext) || 'other';
 }
 
 // Deduplicate (ignoring #fragments), keep http(s) only, attach a category.
-export function prepareLinks(raw) {
+// `rules` (media.js compileRules) adds extensions and drops ignored addresses.
+export function prepareLinks(raw, rules) {
   const seen = new Set();
   const out = [];
   for (const { url, text } of raw) {
@@ -39,7 +42,9 @@ export function prepareLinks(raw) {
     const key = url.split('#')[0];
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ url: key, text: (text || '').trim().slice(0, 200), category: categorize(key) });
+    const lower = key.toLowerCase();
+    if (rules?.ignore.some((w) => lower.includes(w))) continue;
+    out.push({ url: key, text: (text || '').trim().slice(0, 200), category: categorize(key, rules?.ext) });
   }
   return out;
 }

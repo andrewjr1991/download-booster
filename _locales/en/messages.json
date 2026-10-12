@@ -289,5 +289,50 @@
   },
   "recordDrm": {
     "message": "This video is DRM-protected, so it can't be recorded."
+  },
+  "copyLinks": {
+    "message": "Copy links"
+  },
+  "copiedCount": {
+    "message": "Copied $1 link(s)"
+  },
+  "renamePlaceholder": {
+    "message": "Rename, e.g. {title}_{n} — tokens {name} {n} {title} {host} {date}; empty keeps the original names"
+  },
+  "renameExample": {
+    "message": "Names:"
+  },
+  "sniffRules": {
+    "message": "Sniffing rules"
+  },
+  "sniffRulesHint": {
+    "message": "Used by the toolbar popup and the page link list. Separate extensions with spaces or commas."
+  },
+  "ruleVideo": {
+    "message": "Also treat as video"
+  },
+  "ruleAudio": {
+    "message": "Also treat as audio"
+  },
+  "ruleImage": {
+    "message": "Also treat as images"
+  },
+  "ruleMinImage": {
+    "message": "Hide images smaller than (KB)"
+  },
+  "ruleIgnore": {
+    "message": "Ignore addresses containing"
+  },
+  "ruleExtPlaceholder": {
+    "message": "e.g. m4s dat"
+  },
+  "ruleIgnorePlaceholder": {
+    "message": "e.g. ads.example.com, /tracking/"
+  },
+  "ruleAudioPlaceholder": {
+    "message": "e.g. amr"
+  },
+  "ruleImagePlaceholder": {
+    "message": "e.g. jfif"
   }
 }

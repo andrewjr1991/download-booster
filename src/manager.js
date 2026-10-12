@@ -1,5 +1,7 @@
 import { CATEGORY_ORDER, categorize, parsePastedUrls } from './sniff.js';
 import { ICONS } from './icons.js';
+import { DEFAULT_RULES } from './media.js';
+import { pickFilename, applyRename } from './http.js';
 import {
   t,
   DEFAULT_SETTINGS,
@@ -281,6 +283,7 @@ async function openSniff() {
   $('#sniff-source').textContent = t('sniffFrom', [data.title || host, String(sniff.links.length)]);
   $('#sniff-source').title = data.pageUrl || '';
   $('#sniff-search').value = '';
+  $('#sniff-rename').value = '';
   renderFilters();
   renderSniff();
   $('#sniff').hidden = false;
@@ -403,6 +406,8 @@ function updateSniffCount() {
   const n = selectedLinks().length;
   $('#sniff-go').textContent = t('downloadSelected', [String(n)]);
   $('#sniff-go').disabled = n === 0;
+  $('#sniff-copy').disabled = n === 0;
+  renderRenamePreview();
   $('#sniff-all').checked = shown.length > 0 && n === shown.length;
   $('#sniff-all').indeterminate = n > 0 && n < shown.length;
 }
@@ -416,12 +421,47 @@ $('#sniff-all').addEventListener('change', (e) => {
 });
 $('#sniff-search').addEventListener('input', renderSniff);
 $('#sniff-close').addEventListener('click', closeSniff);
+// ---- batch rename and copy ------------------------------------------------------
+
+function renameRule(n, total) {
+  const pattern = $('#sniff-rename').value.trim();
+  if (!pattern) return null;
+  let host = '';
+  try {
+    host = new URL(sniff.pageUrl).host;
+  } catch {}
+  const d = new Date();
+  const date = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  return { pattern, n, total, title: sniff.title, host, date };
+}
+
+// New names for the first few picked files. The real extension comes from
+// the server, so the download may differ when the address has none.
+function renderRenamePreview() {
+  const files = selectedLinks().filter((l) => l.category !== 'stream');
+  const out = $('#sniff-rename-preview');
+  if (!$('#sniff-rename').value.trim() || !files.length) return (out.textContent = '');
+  const names = files.slice(0, 3).map((l, i) => applyRename(pickFilename({ url: l.url }), renameRule(i + 1, files.length)));
+  out.textContent = `${t('renameExample')} ${names.join(' / ')}${files.length > 3 ? ' …' : ''}`;
+}
+$('#sniff-rename').addEventListener('input', renderRenamePreview);
+
+$('#sniff-copy').innerHTML = ICONS.copy;
+$('#sniff-copy').append(t('copyLinks'));
+$('#sniff-copy').addEventListener('click', async () => {
+  const urls = selectedLinks().map((l) => l.url);
+  await navigator.clipboard.writeText(urls.join('\n'));
+  note(t('copiedCount', [String(urls.length)]));
+});
+
 $('#sniff-go').addEventListener('click', async () => {
   const picked = selectedLinks();
   if (!picked.length) return;
   // Sent with the page as Referer, as a click on the page would.
   const files = picked.filter((l) => l.category !== 'stream').map((l) => l.url);
-  if (files.length) await addUrls(files, { source: 'sniff', referrer: sniff.pageUrl });
+  for (const [i, url] of files.entries()) {
+    await addUrls([url], { source: 'sniff', referrer: sniff.pageUrl, rename: renameRule(i + 1, files.length) });
+  }
   // m3u8: download the pieces (best quality) and join them, named after the page.
   for (const l of picked.filter((x) => x.category === 'stream')) {
     await addUrls([l.url], { kind: 'hls', filename: sniff.title || undefined, source: 'sniff', referrer: sniff.pageUrl });
@@ -485,6 +525,9 @@ async function loadSettings() {
   $('#maxConnections').value = s.maxConnections;
   $('#maxActive').value = s.maxActive;
   $('#speedLimitMB').value = s.speedLimitMB || '';
+  const rules = { ...DEFAULT_RULES, ...s.sniffRules };
+  for (const k of ['video', 'audio', 'image', 'ignore']) $(`#rule-${k}`).value = rules[k];
+  $('#rule-minImageKB').value = rules.minImageKB;
 }
 
 async function saveSettings() {
@@ -496,12 +539,20 @@ async function saveSettings() {
     maxActive: clamp(Number($('#maxActive').value), 1, 10, DEFAULT_SETTINGS.maxActive),
     // Empty or 0 means no limit; tenths of a MB/s are allowed.
     speedLimitMB: Math.min(100000, Math.max(0, Math.round(Number($('#speedLimitMB').value) * 10) / 10 || 0)),
+    sniffRules: {
+      video: $('#rule-video').value.trim(),
+      audio: $('#rule-audio').value.trim(),
+      image: $('#rule-image').value.trim(),
+      minImageKB: clamp(Number($('#rule-minImageKB').value), 0, 100000, DEFAULT_RULES.minImageKB),
+      ignore: $('#rule-ignore').value.trim(),
+    },
   };
   await chrome.storage.local.set({ settings });
   await engine('set-limit', { maxActive: settings.maxActive, speedLimit: settings.speedLimitMB * MB });
   refresh();
 }
 for (const id of ['autoTakeover', 'minSizeMB', 'maxConnections', 'maxActive', 'speedLimitMB']) $('#' + id).addEventListener('change', saveSettings);
+for (const el of document.querySelectorAll('#settings .rule, #rule-minImageKB')) el.addEventListener('change', saveSettings);
 
 loadSettings().then(async () => {
   // Keep the engine's queue limit in step with the saved setting.

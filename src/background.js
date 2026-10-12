@@ -1,5 +1,5 @@
 import { collectLinks, prepareLinks, mergeMedia } from './sniff.js';
-import { addMedia, sizeFrom, header } from './media.js';
+import { addMedia, sizeFrom, header, compileRules } from './media.js';
 import { sanitizeFilename } from './http.js';
 
 // MV3 service worker: only a dispatcher. It can be killed after 30 s idle, so
@@ -104,7 +104,7 @@ async function sniffPage(tab) {
   } catch (err) {
     console.warn('sniff failed', err); // e.g. chrome:// pages
   }
-  const links = mergeMedia(prepareLinks(raw), await mediaList(tab.id));
+  const links = mergeMedia(prepareLinks(raw, await sniffRules()), await mediaList(tab.id));
   await chrome.storage.session.set({
     sniff: { pageUrl: tab.url, title: tab.title, links, at: Date.now() },
   });
@@ -214,16 +214,30 @@ chrome.webRequest.onBeforeRequest.addListener(
   { urls: ['<all_urls>'], types: ['main_frame'] },
 );
 
+// The user's sniffing rules (manager settings), compiled once per change.
+let rulesCache = null;
+function sniffRules() {
+  rulesCache ??= getSettings().then((s) => compileRules(s.sniffRules));
+  return rulesCache;
+}
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.settings) rulesCache = null;
+});
+
 chrome.webRequest.onResponseStarted.addListener(
   async (d) => {
     if (d.tabId < 0 || d.statusCode >= 400) return;
-    const list = await mediaList(d.tabId);
-    const changed = addMedia(list, {
-      url: d.url,
-      type: d.type,
-      mime: header(d.responseHeaders, 'content-type'),
-      size: sizeFrom(d.responseHeaders),
-    });
+    const [list, rules] = await Promise.all([mediaList(d.tabId), sniffRules()]);
+    const changed = addMedia(
+      list,
+      {
+        url: d.url,
+        type: d.type,
+        mime: header(d.responseHeaders, 'content-type'),
+        size: sizeFrom(d.responseHeaders),
+      },
+      rules,
+    );
     if (changed) storeMedia(d.tabId, list);
   },
   { urls: ['<all_urls>'], types: ['media', 'image', 'xmlhttprequest', 'object', 'other'] },

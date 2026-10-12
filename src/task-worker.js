@@ -12,7 +12,7 @@ import {
   splitLargest,
   RateLimiter,
 } from './scheduler.js';
-import { parseContentRange, pickFilename, isThrottleStatus } from './http.js';
+import { parseContentRange, pickFilename, isThrottleStatus, applyRename } from './http.js';
 
 const TICK_MS = 500;
 const CHECKPOINT_MS = 2000;
@@ -163,11 +163,14 @@ async function probe() {
   const meta = {
     size,
     rangeSupported,
-    filename: pickFilename({
-      disposition: resp.headers.get('content-disposition'),
-      url: resp.url || task.url,
-      fallback: task.filename,
-    }),
+    filename: applyRename(
+      pickFilename({
+        disposition: resp.headers.get('content-disposition'),
+        url: resp.url || task.url,
+        fallback: task.filename,
+      }),
+      task.rename,
+    ),
     etag: resp.headers.get('etag'),
     lastModified: resp.headers.get('last-modified'),
     mime: resp.headers.get('content-type'),

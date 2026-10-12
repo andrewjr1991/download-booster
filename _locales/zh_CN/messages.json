@@ -289,5 +289,50 @@
   },
   "recordDrm": {
     "message": "这个视频有 DRM 加密保护，无法录制。"
+  },
+  "copyLinks": {
+    "message": "复制链接"
+  },
+  "copiedCount": {
+    "message": "已复制 $1 个链接"
+  },
+  "renamePlaceholder": {
+    "message": "重命名规则，如 {title}_{n}。可用 {name} 原名、{n} 序号、{title} 网页标题、{host} 网站、{date} 日期；留空保持原名"
+  },
+  "renameExample": {
+    "message": "新文件名："
+  },
+  "sniffRules": {
+    "message": "嗅探规则"
+  },
+  "sniffRulesHint": {
+    "message": "用于工具栏弹窗和“本页链接”。多个扩展名用空格或逗号分开。"
+  },
+  "ruleVideo": {
+    "message": "额外的视频扩展名"
+  },
+  "ruleAudio": {
+    "message": "额外的音频扩展名"
+  },
+  "ruleImage": {
+    "message": "额外的图片扩展名"
+  },
+  "ruleMinImage": {
+    "message": "隐藏小于此大小的图片（KB）"
+  },
+  "ruleIgnore": {
+    "message": "忽略包含这些关键词的地址"
+  },
+  "ruleExtPlaceholder": {
+    "message": "例如 m4s dat"
+  },
+  "ruleIgnorePlaceholder": {
+    "message": "例如 ads.example.com, /tracking/"
+  },
+  "ruleAudioPlaceholder": {
+    "message": "例如 amr"
+  },
+  "ruleImagePlaceholder": {
+    "message": "例如 jfif"
   }
 }
