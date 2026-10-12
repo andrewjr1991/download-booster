@@ -141,6 +141,7 @@ export function ivFor(seg) {
 export function variantLabel(v) {
   const parts = [];
   if (v.height) parts.push(`${v.height}p`);
-  if (v.bandwidth) parts.push(`${(v.bandwidth / 1e6).toFixed(v.bandwidth >= 1e7 ? 0 : 1)} Mbps`);
+  if (v.bandwidth >= 1e5) parts.push(`${(v.bandwidth / 1e6).toFixed(v.bandwidth >= 1e7 ? 0 : 1)} Mbps`);
+  else if (v.bandwidth) parts.push(`${Math.round(v.bandwidth / 1000)} kbps`);
   return parts.join(' · ') || 'auto';
 }

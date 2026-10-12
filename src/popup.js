@@ -3,7 +3,8 @@
 
 import { ICONS } from './icons.js';
 import { t, localize, engine, addUrls, bytes, speed, duration, statusText } from './client.js';
-import { parsePlaylist, variantLabel, audioFor } from './hls.js';
+import { variantLabel, audioFor } from './hls.js';
+import { parseManifest } from './dash.js';
 
 localize();
 const $ = (sel) => document.querySelector(sel);
@@ -295,7 +296,7 @@ $('#pv-download').onclick = () => {
   else download([m]);
 };
 
-// ---- m3u8 streams ------------------------------------------------------------------
+// ---- m3u8 and DASH streams ---------------------------------------------------------
 // The preview panel lists the stream's qualities instead of playing it; the
 // engine then fetches every piece and joins them into one file.
 
@@ -304,7 +305,7 @@ let streamChoice = null; // variant URL, or null for a plain media playlist
 async function getPlaylist(url) {
   const resp = await fetch(url, { credentials: 'include', cache: 'no-store' });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  return parsePlaylist(await resp.text(), resp.url || url);
+  return parseManifest(await resp.text(), resp.url || url);
 }
 
 async function openStream(m) {
@@ -341,7 +342,8 @@ async function openStream(m) {
         const audio = audioFor(list, v);
         if (audio) {
           const note = document.createElement('small');
-          note.textContent = t('separateAudio', [audio.name || '']);
+          // No name: drop the gap it leaves.
+          note.textContent = t('separateAudio', [audio.name || '']).replace(/\s+([（(])/, (x, p) => (p === '(' ? ' (' : p));
           label.append(note);
         }
         box.append(label);
@@ -367,6 +369,8 @@ function streamIcon() {
 
 async function chooseVariant(m, v) {
   streamChoice = v.url;
+  // DASH: the manifest already listed this quality's pieces.
+  if (v.list) return describe(v.list);
   $('#pv-download').disabled = true;
   $('#pv-info').textContent = t('loading');
   try {
@@ -379,7 +383,8 @@ async function chooseVariant(m, v) {
 
 // Length, number of pieces, and whether it can be downloaded at all.
 function describe(list) {
-  const parts = [duration(list.duration), t('pieces', [String(list.segments.length)])];
+  const parts = [duration(list.duration)];
+  if (list.segments.length) parts.push(t('pieces', [String(list.segments.length)]));
   if (list.encrypted && !list.drm) parts.push(t('aes128'));
   let ok = true;
   if (list.drm) {
@@ -396,7 +401,7 @@ function describe(list) {
 async function downloadStream(m, variant) {
   // Named after the page (the playlist is usually just "index.m3u8").
   const title = (state.tab?.title || '').trim();
-  const base = title && !/^https?:/i.test(title) ? title : m.name.replace(/\.m3u8$/i, '');
+  const base = title && !/^https?:/i.test(title) ? title : m.name.replace(/\.(m3u8|mpd)$/i, '');
   await addUrls([m.url], { kind: 'hls', variant, filename: base, source: 'media', referrer: state.tab?.url || null });
   toast(t('addedCount', ['1']));
   await refreshTasks();

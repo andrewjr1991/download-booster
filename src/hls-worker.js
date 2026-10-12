@@ -5,10 +5,13 @@
 // the audio are downloaded one after the other, then joined into one .mp4
 // (fragmented MP4), or, when they can't be joined (MPEG-TS), the audio is
 // saved as a second file next to the video.
+// DASH (.mpd) manifests are handled the same way: dash.js turns them into a
+// master playlist whose qualities and audio carry their pieces.
 // Talks to offscreen.js with the same messages as task-worker.js.
 
 import { SpeedMeter, RateLimiter } from './scheduler.js';
 import { parsePlaylist, ivFor, audioFor } from './hls.js';
+import { parseManifest, parseSidx } from './dash.js';
 import { sanitizeFilename } from './http.js';
 import { scanFile, mux, canJoin } from './fmp4.js';
 
@@ -81,8 +84,30 @@ async function mediaPlaylist(url) {
   return { list, url: res.url };
 }
 
+// A DASH quality or audio language: its pieces are already listed, except
+// for single-file ones, whose pieces are in the file's own index (sidx).
+async function dashTrack(entry) {
+  const list = entry.list;
+  if (!list.endList) throw coded('live', 'Live stream');
+  if (list.drm) throw coded('drm', 'Encrypted with DRM');
+  if (list.segmentBase) {
+    const { url, init, index } = list.segmentBase;
+    const from = Math.min(index.offset, init?.offset ?? index.offset);
+    const to = Math.max(index.offset + index.length, init ? init.offset + init.length : 0);
+    const head = await fetchBytes(url, { offset: from, length: to - from });
+    const refs = parseSidx(head, from, index);
+    const map = init ? { url, range: init } : null;
+    list.segments = refs?.length
+      ? refs.map((r) => ({ url, duration: r.duration, map, range: { offset: r.offset, length: r.length } }))
+      : [{ url, duration: list.duration || 0, map: null, range: null }];
+  }
+  if (!list.segments.length) throw coded('http', 'Empty manifest');
+  return { list, url: entry.url };
+}
+
 // Extension for a track saved on its own.
 function extOf(list) {
+  if (list.ext) return list.ext;
   if (list.fmp4) return 'mp4';
   const last = list.segments[0].url.split(/[?#]/)[0].toLowerCase();
   return /\.(aac|mp3|ac3|ec3)$/.exec(last)?.[1] || 'ts';
@@ -99,14 +124,18 @@ async function start(t) {
   // plus the separate audio it plays with, if any.
   let video;
   let audio = null;
-  const first = await getText(prev?.media || task.url);
-  const top = parsePlaylist(first.text, first.url);
+  // (A DASH manifest is always read again: it is its own "media playlist".)
+  const first = await getText(prev?.media && !prev.dash ? prev.media : task.url);
+  const top = parseManifest(first.text, first.url);
   if (top.type === 'master') {
-    const v = top.variants.find((x) => x.url === task.variant) || top.variants[0];
-    if (!v) throw coded('http', 'Empty master playlist');
-    video = await mediaPlaylist(v.url);
+    // DASH keys are "<manifest url>#video=<id>": match on the id, the
+    // manifest's address may have changed (signed URLs).
+    const id = (u) => (top.dash ? String(u).split('#').pop() : u);
+    const v = top.variants.find((x) => id(x.url) === id(task.variant)) || top.variants[0];
+    if (!v) throw coded('http', top.dash ? 'Empty manifest' : 'Empty master playlist');
+    video = top.dash ? await dashTrack(v) : await mediaPlaylist(v.url);
     const a = audioFor(top, v);
-    if (a) audio = await mediaPlaylist(a.url);
+    if (a) audio = top.dash ? await dashTrack(a) : await mediaPlaylist(a.url);
   } else {
     video = await mediaPlaylist(first.url);
     // Resuming a two-track task: the audio playlist was saved.
@@ -139,6 +168,7 @@ async function start(t) {
   if (audio) tracks.push(track('audio', audio, `${crypto.randomUUID()}.part`));
   state = {
     media: video.url,
+    dash: !!top.dash,
     duration: video.list.duration,
     fmp4: join || video.list.fmp4,
     tracks: null,
@@ -151,10 +181,10 @@ async function start(t) {
   const root = await navigator.storage.getDirectory();
   dir = await root.getDirectoryHandle('downloads', { create: true });
 
-  const base = (task.filename || '').replace(/\.(m3u8|ts|mp4)$/i, '') || 'video';
+  const base = (task.filename || '').replace(/\.(m3u8|mpd|ts|mp4)$/i, '') || 'video';
   const ext = join ? 'mp4' : tracks[0].ext;
   const filename = sanitizeFilename(`${base}.${ext}`);
-  const mime = ext === 'mp4' ? 'video/mp4' : 'video/mp2t';
+  const mime = { mp4: 'video/mp4', webm: 'video/webm', m4a: 'audio/mp4' }[ext] || 'video/mp2t';
   post({ type: 'meta', meta: { size: null, rangeSupported: null, filename, mime, finalUrl: task.url }, segments: null, hls: snapshot() });
 
   // Pieces often live on other hosts (CDNs); let the engine add the page's
