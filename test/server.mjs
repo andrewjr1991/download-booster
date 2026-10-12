@@ -8,6 +8,9 @@
 //   /hotlink.bin    like /file.bin but 403 unless Referer is this server's /page
 //   /page           an HTML page linking to /hotlink.bin (plus a few non-files)
 //   /cookie.bin     like /file.bin but 403 without the cookie session=1
+//   /media          a page playing /clip.mp4 (the same bytes as video/mp4), showing
+//                   /photo.jpg (50 KB) and /icon.png (2 KB), and fetching
+//                   /live.m3u8 and one of its /seg1.ts pieces
 // Add ?ttfb=1500 to delay every response by that many ms (a far-away CDN).
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -52,15 +55,38 @@ export function startServer({ port = 8787, sizeMB = 40, rateKBps = 2048 } = {}) 
       res.writeHead(403).end('login required');
       return;
     }
-    if (!['/file.bin', '/norange.bin', '/flaky.bin', '/hotlink.bin', '/cookie.bin'].includes(path)) {
+    if (path === '/media') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(
+        '<title>media</title><video src="/clip.mp4" preload="auto" muted autoplay></video>' +
+          '<img src="/photo.jpg"><img src="/icon.png">' +
+          "<script>fetch('/live.m3u8');fetch('/seg1.ts')</script>",
+      );
+      return;
+    }
+    const small = { '/photo.jpg': ['image/jpeg', 50 * 1024], '/icon.png': ['image/png', 2048], '/seg1.ts': ['video/mp2t', 4096] }[path];
+    if (small) {
+      res.writeHead(200, { 'Content-Type': small[0], 'Content-Length': small[1] });
+      res.end(data.subarray(0, small[1]));
+      return;
+    }
+    if (path === '/live.m3u8') {
+      res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
+      res.end('#EXTM3U\n#EXTINF:4,\nseg1.ts\n');
+      return;
+    }
+    if (!['/file.bin', '/norange.bin', '/flaky.bin', '/hotlink.bin', '/cookie.bin', '/clip.mp4'].includes(path)) {
       res.writeHead(404).end();
       return;
     }
-    const headers = {
-      'Content-Type': 'application/octet-stream',
-      'Content-Disposition': `attachment; filename="test-${sizeMB}MB.bin"`,
-      'Access-Control-Allow-Origin': '*',
-    };
+    const headers =
+      path === '/clip.mp4'
+        ? { 'Content-Type': 'video/mp4' }
+        : {
+            'Content-Type': 'application/octet-stream',
+            'Content-Disposition': `attachment; filename="test-${sizeMB}MB.bin"`,
+            'Access-Control-Allow-Origin': '*',
+          };
     let start = 0;
     let end = size; // exclusive
     let status = 200;

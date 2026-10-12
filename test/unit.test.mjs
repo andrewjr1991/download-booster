@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { AdaptiveController, RateLimiter, splitLargest, remaining, MIN_SPLIT } from '../src/scheduler.js';
 import { parseContentRange, filenameFromDisposition, sanitizeFilename, pickFilename } from '../src/http.js';
 import { categorize, extensionOf, prepareLinks, parsePastedUrls } from '../src/sniff.js';
+import { classify, sizeFrom, mediaKey, addMedia } from '../src/media.js';
 
 test('parseContentRange', () => {
   assert.deepEqual(parseContentRange('bytes 0-99/1000'), { start: 0, end: 100, total: 1000 });
@@ -180,4 +181,33 @@ test('rethink climbs again quickly once a limit is lifted', () => {
   c.rethink(30000);
   run(30000, 50000, 100); // 2 MB/s per connection, no limit
   assert.ok(c.target >= 4, `target ${c.target}`);
+});
+
+test('media seen on the network: kinds, sizes, duplicates', () => {
+  assert.equal(classify({ url: 'https://v.cdn/a/clip', mime: 'video/mp4' }), 'video');
+  assert.equal(classify({ url: 'https://v.cdn/a/song.mp3', mime: 'application/octet-stream' }), 'audio');
+  assert.equal(classify({ url: 'https://v.cdn/a/x', type: 'media', mime: '' }), 'video');
+  assert.equal(classify({ url: 'https://v.cdn/live.m3u8', mime: 'text/plain' }), 'stream');
+  assert.equal(classify({ url: 'https://v.cdn/x', mime: 'application/vnd.apple.mpegurl; charset=utf-8' }), 'stream');
+  assert.equal(classify({ url: 'https://v.cdn/seg1.ts', mime: 'video/mp2t' }), null, 'stream pieces are skipped');
+  assert.equal(classify({ url: 'https://v.cdn/icon.png', mime: 'image/png', size: 900 }), null, 'icons are skipped');
+  assert.equal(classify({ url: 'https://v.cdn/p.jpg', mime: 'image/jpeg', size: 50000 }), 'image');
+  assert.equal(classify({ url: 'https://v.cdn/app.js', mime: 'text/javascript' }), null);
+  assert.equal(classify({ url: 'blob:https://v.cdn/1', mime: 'video/mp4' }), null);
+
+  assert.equal(sizeFrom([{ name: 'Content-Range', value: 'bytes 0-99/5000' }]), 5000);
+  assert.equal(sizeFrom([{ name: 'content-length', value: '123' }]), 123);
+  assert.equal(sizeFrom([]), null);
+
+  assert.equal(mediaKey('https://v.cdn/v.mp4?sig=a+b&range=0-1000#t=3'), 'https://v.cdn/v.mp4?sig=a+b');
+  assert.equal(mediaKey('https://v.cdn/v.mp4?sig=a%20b'), 'https://v.cdn/v.mp4?sig=a%20b', 'query untouched');
+
+  const list = [];
+  assert.ok(addMedia(list, { url: 'https://v.cdn/v.mp4?range=0-99', mime: 'video/mp4', size: 100 }));
+  assert.ok(addMedia(list, { url: 'https://v.cdn/v.mp4?range=100-999', mime: 'video/mp4', size: 9000 }), 'bigger size updates');
+  assert.ok(!addMedia(list, { url: 'https://v.cdn/v.mp4', mime: 'video/mp4', size: 9000 }));
+  assert.equal(list.length, 1);
+  assert.equal(list[0].url, 'https://v.cdn/v.mp4');
+  assert.equal(list[0].name, 'v.mp4');
+  assert.equal(list[0].size, 9000);
 });

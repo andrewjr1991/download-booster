@@ -5,13 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title data-i18n="managerTitle">Downloads</title>
     <link rel="icon" href="../icons/icon32.png" />
+    <link rel="stylesheet" href="ui.css" />
     <link rel="stylesheet" href="manager.css" />
   </head>
   <body>
     <header>
-      <img src="../icons/icon48.png" alt="" width="28" height="28" />
-      <h1 data-i18n="managerTitle">Downloads</h1>
-      <button id="clear" class="ghost" data-i18n="clearFinished">Clear completed</button>
+      <div class="head-inner">
+        <img src="../icons/icon48.png" alt="" width="28" height="28" />
+        <h1 data-i18n="managerTitle">Downloads</h1>
+        <button id="clear" class="ghost" data-i18n="clearFinished">Clear completed</button>
+      </div>
     </header>
 
     <main>
@@ -69,13 +72,16 @@
 
     <template id="task-tpl">
       <article class="task">
-        <div class="top">
-          <span class="name"></span>
-          <span class="status"></span>
+        <span class="ftype"></span>
+        <div class="body">
+          <div class="top">
+            <span class="name"></span>
+            <span class="status"></span>
+          </div>
+          <canvas class="bar" height="8"></canvas>
+          <div class="meta"></div>
+          <div class="compare hint"></div>
         </div>
-        <canvas class="bar" height="10"></canvas>
-        <div class="meta"></div>
-        <div class="compare hint"></div>
         <div class="actions"></div>
       </article>
     </template>

@@ -1,61 +1,24 @@
-import { CATEGORY_ORDER, parsePastedUrls } from './sniff.js';
+import { CATEGORY_ORDER, categorize, parsePastedUrls } from './sniff.js';
+import { ICONS } from './icons.js';
+import {
+  t,
+  DEFAULT_SETTINGS,
+  MB,
+  localize,
+  engine,
+  addUrls as addTasks,
+  bytes,
+  speed,
+  duration,
+  statusText,
+} from './client.js';
 
-const t = (key, subs) => chrome.i18n.getMessage(key, subs) || key;
-const DEFAULT_SETTINGS = { autoTakeover: true, minSizeMB: 20, maxConnections: 6, maxActive: 3, speedLimitMB: 0 };
-
-for (const el of document.querySelectorAll('[data-i18n]')) el.textContent = t(el.dataset.i18n);
-for (const el of document.querySelectorAll('[data-i18n-placeholder]')) el.placeholder = t(el.dataset.i18nPlaceholder);
-document.documentElement.lang = chrome.i18n.getUILanguage();
+localize();
 
 const $ = (sel) => document.querySelector(sel);
 const cards = new Map(); // task id -> card element
 // Open manager.html?debug to see protocol and per-level measurements.
 const DEBUG = new URLSearchParams(location.search).has('debug');
-const MB = 1024 * 1024;
-
-function engine(cmd, args = {}) {
-  return chrome.runtime.sendMessage({ type: 'engine', cmd, ...args });
-}
-
-// ---- formatting --------------------------------------------------------------
-
-function bytes(n) {
-  if (n == null) return '?';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let i = 0;
-  while (n >= 1024 && i < units.length - 1) {
-    n /= 1024;
-    i++;
-  }
-  return `${n.toFixed(i === 0 ? 0 : n < 10 ? 2 : 1)} ${units[i]}`;
-}
-const speed = (n) => `${bytes(n || 0)}/s`;
-
-function duration(sec) {
-  if (!isFinite(sec) || sec < 0) return '';
-  sec = Math.round(sec);
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = sec % 60;
-  return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
-}
-
-const STATUS = {
-  queued: 'statusQueued',
-  downloading: 'statusDownloading',
-  paused: 'statusPaused',
-  saving: 'statusSaving',
-  completed: 'statusCompleted',
-  error: 'statusError',
-};
-const ERRORS = {
-  network: 'errNetwork',
-  http: 'errHttp',
-  'no-space': 'errNoSpace',
-  save: 'errSave',
-  'range-unsupported': 'errRangeUnsupported',
-  engine: 'errEngine',
-};
 
 // ---- rendering ----------------------------------------------------------------
 
@@ -95,13 +58,16 @@ function updateCard(card, task) {
   const name = task.filename || task.url;
   card.querySelector('.name').textContent = name;
   card.querySelector('.name').title = task.url;
+  const kind = categorize(`https://x/${encodeURIComponent(name)}`);
+  const ftype = card.querySelector('.ftype');
+  if (ftype.dataset.kind !== kind) {
+    ftype.dataset.kind = kind;
+    ftype.innerHTML = ICONS[kind] || ICONS.other;
+  }
 
   const status = card.querySelector('.status');
   status.dataset.s = task.status;
-  status.textContent =
-    task.status === 'error' && task.error
-      ? `${t('statusError')}: ${t(ERRORS[task.error.code] || 'errEngine')}`
-      : t(STATUS[task.status] || 'statusQueued');
+  status.textContent = statusText(task);
   status.title = task.error?.message || '';
 
   drawBar(card.querySelector('.bar'), task);
@@ -150,17 +116,18 @@ function levelsLine(task) {
 
 function renderActions(box, task) {
   const wanted = [];
-  if (task.status === 'downloading' || task.status === 'queued') wanted.push(['pause', 'pause'], ['cancel', 'cancel']);
-  if (task.status === 'paused') wanted.push(['resume', 'resume'], ['cancel', 'cancel']);
-  if (task.status === 'error') wanted.push(['retry', 'resume'], ['remove', 'remove']);
-  if (task.status === 'completed') wanted.push(['showInFolder', 'show'], ['remove', 'remove']);
+  if (task.status === 'downloading' || task.status === 'queued') wanted.push(['pause', 'pause', 'pause'], ['cancel', 'cancel', 'close']);
+  if (task.status === 'paused') wanted.push(['resume', 'resume', 'play'], ['cancel', 'cancel', 'close']);
+  if (task.status === 'error') wanted.push(['retry', 'resume', 'retry'], ['remove', 'remove', 'trash']);
+  if (task.status === 'completed') wanted.push(['showInFolder', 'show', 'folder'], ['remove', 'remove', 'trash']);
   const key = wanted.map((w) => w[0]).join();
   if (box.dataset.key === key) return;
   box.dataset.key = key;
   box.replaceChildren(
-    ...wanted.map(([label, action]) => {
+    ...wanted.map(([label, action, ic]) => {
       const b = document.createElement('button');
-      b.textContent = t(label);
+      b.innerHTML = ICONS[ic];
+      b.append(t(label));
       b.onclick = () => act(action, task);
       return b;
     }),
@@ -179,7 +146,7 @@ async function act(action, task) {
 function drawBar(canvas, task) {
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth || 600;
-  const h = 10;
+  const h = 8;
   if (canvas.width !== Math.round(w * dpr)) {
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
@@ -192,6 +159,7 @@ function drawBar(canvas, task) {
   ctx.fillStyle = css.getPropertyValue(task.status === 'error' ? '--err' : '--accent');
 
   if (task.status === 'completed') {
+    ctx.fillStyle = css.getPropertyValue('--ok');
     ctx.fillRect(0, 0, w, h);
     return;
   }
@@ -226,18 +194,7 @@ chrome.runtime.onMessage.addListener((msg) => {
 });
 
 async function addUrls(urls, extra = {}) {
-  const { settings } = await chrome.storage.local.get('settings');
-  const s = { ...DEFAULT_SETTINGS, ...settings };
-  for (const url of urls) {
-    await engine('add', {
-      url,
-      source: 'manual',
-      maxConnections: s.maxConnections,
-      maxActive: s.maxActive,
-      speedLimit: s.speedLimitMB * MB,
-      ...extra,
-    });
-  }
+  await addTasks(urls, extra);
   refresh();
 }
 

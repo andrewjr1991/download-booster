@@ -339,6 +339,39 @@ await check('speed limit: all tasks together stay under it, and lifting it speed
   return `2 tasks limited to 1.5 MB/s: ${mbps(limited, 1000)}; unlimited: ${mbps(free, 1000)}`;
 });
 
+await check('popup lists the video, images and playlist a page loaded, and downloads the video', async () => {
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6 });
+  const p = await ctx.newPage();
+  await p.goto(`${srv.url}/media`);
+  await sleep(2500);
+  const tabId = await sw.evaluate(async (url) => (await chrome.tabs.query({ url }))[0].id, `${srv.url}/media`);
+  const badge = await sw.evaluate((tabId) => chrome.action.getBadgeText({ tabId }), tabId);
+  const pop = await ctx.newPage();
+  await pop.setViewportSize({ width: 400, height: 560 });
+  await pop.goto(`chrome-extension://${extId}/src/popup.html?tab=${tabId}`);
+  await pop.waitForSelector('#media-list li');
+  const chips = await pop.$$eval('#kinds button', (bs) => bs.map((b) => `${b.dataset.kind}:${b.getAttribute('aria-pressed')}`));
+  if (JSON.stringify(chips) !== JSON.stringify(['video:true', 'stream:false', 'image:false'])) throw new Error(`chips ${JSON.stringify(chips)}`);
+  const videos = await pop.$$eval('#media-list .name', (els) => els.map((e) => e.textContent));
+  if (JSON.stringify(videos) !== '["clip.mp4"]') throw new Error(`videos ${JSON.stringify(videos)}`);
+  await pop.click('#kinds button[data-kind="image"]');
+  const images = await pop.$$eval('#media-list li.tile img', (els) => els.map((e) => e.alt));
+  if (JSON.stringify(images) !== '["photo.jpg"]') throw new Error(`images ${JSON.stringify(images)}`);
+  await pop.screenshot({ path: path.join(EXT, 'test', 'popup-screenshot.png') });
+  await pop.click('#kinds button[data-kind="video"]');
+  const before = (await engine('list')).tasks.map((t) => t.id);
+  await pop.click('#media-list li button.icon');
+  await pop.waitForSelector('#view-tasks:not([hidden]) #task-list li');
+  await p.close();
+  const task = (await engine('list')).tasks.find((t) => !before.includes(t.id));
+  if (!task?.url.endsWith('/clip.mp4')) throw new Error(`added ${task?.url}`);
+  const done = await waitTask(task.id, (t) => t.status === 'completed');
+  const { hash } = await savedFileHash(done.downloadId);
+  if (hash !== srv.sha256) throw new Error('hash mismatch');
+  await pop.close();
+  return `badge "${badge}", chips ${chips.join(' ')}, icon and .ts piece hidden, video saved as ${done.filename}`;
+});
+
 await check('small files are left to the browser', async () => {
   await setSettings({ autoTakeover: true, minSizeMB: SIZE_MB + 1, maxConnections: 6 });
   const before = (await engine('list')).tasks.map((t) => t.id);

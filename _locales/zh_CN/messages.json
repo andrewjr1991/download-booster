@@ -190,5 +190,35 @@
   },
   "limitedTo": {
     "message": "限速 $1"
+  },
+  "popupMedia": {
+    "message": "本页资源"
+  },
+  "popupTasks": {
+    "message": "下载任务"
+  },
+  "openManager": {
+    "message": "打开下载管理"
+  },
+  "sniffLinks": {
+    "message": "嗅探本页所有链接"
+  },
+  "mediaEmpty": {
+    "message": "还没有发现视频、音频或图片。先播放视频或滚动页面，再打开看看。"
+  },
+  "tasksEmpty": {
+    "message": "还没有下载任务。"
+  },
+  "catStream": {
+    "message": "流媒体"
+  },
+  "streamHint": {
+    "message": "m3u8/mpd 播放列表：暂不支持合并分片，可复制链接"
+  },
+  "copyLink": {
+    "message": "复制链接"
+  },
+  "copied": {
+    "message": "已复制链接"
   }
 }

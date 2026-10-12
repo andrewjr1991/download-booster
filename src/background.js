@@ -1,4 +1,5 @@
 import { collectLinks, prepareLinks } from './sniff.js';
+import { addMedia, sizeFrom, header } from './media.js';
 
 // MV3 service worker: only a dispatcher. It can be killed after 30 s idle, so
 // all download work lives in the offscreen document (offscreen.js).
@@ -87,7 +88,6 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   openManager();
 });
 
-chrome.action.onClicked.addListener(() => openManager());
 
 // Collect every link and media source on the page (all frames) and hand
 // the list to the manager page for picking.
@@ -159,6 +159,80 @@ chrome.downloads.onCreated.addListener(async (item) => {
   }
 });
 
+// ---- media the page loaded ------------------------------------------------
+// Every video, audio file, image and stream playlist a tab receives is noted
+// here, so the popup can offer them even when the page has no link to them
+// (players fetch their video in the background). Kept in storage.session
+// because this service worker can be stopped at any time.
+
+const mediaByTab = new Map(); // tabId -> Promise<list>
+const saveTimers = new Map();
+
+function mediaList(tabId) {
+  if (!mediaByTab.has(tabId)) {
+    mediaByTab.set(
+      tabId,
+      chrome.storage.session.get(`media:${tabId}`).then((r) => r[`media:${tabId}`] || []),
+    );
+  }
+  return mediaByTab.get(tabId);
+}
+
+function storeMedia(tabId, list) {
+  clearTimeout(saveTimers.get(tabId));
+  saveTimers.set(
+    tabId,
+    setTimeout(() => {
+      saveTimers.delete(tabId);
+      chrome.storage.session.set({ [`media:${tabId}`]: list }).catch(() => {});
+      mediaBadge(tabId, list);
+    }, 300),
+  );
+}
+
+function clearMedia(tabId) {
+  clearTimeout(saveTimers.get(tabId));
+  mediaByTab.set(tabId, Promise.resolve([]));
+  chrome.storage.session.remove(`media:${tabId}`).catch(() => {});
+  chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
+}
+
+// The tab's own badge shows how much media it has; it overrides the global
+// badge (running downloads) on that tab only.
+function mediaBadge(tabId, list) {
+  const n = list.filter((m) => m.kind !== 'image').length || list.length;
+  chrome.action.setBadgeText({ tabId, text: n ? String(Math.min(n, 99)) : '' }).catch(() => {});
+  chrome.action.setBadgeBackgroundColor({ tabId, color: '#16a34a' }).catch(() => {});
+}
+
+chrome.webRequest.onBeforeRequest.addListener(
+  (d) => {
+    if (d.tabId >= 0 && d.frameId === 0) clearMedia(d.tabId); // a new page in this tab
+  },
+  { urls: ['<all_urls>'], types: ['main_frame'] },
+);
+
+chrome.webRequest.onResponseStarted.addListener(
+  async (d) => {
+    if (d.tabId < 0 || d.statusCode >= 400) return;
+    const list = await mediaList(d.tabId);
+    const changed = addMedia(list, {
+      url: d.url,
+      type: d.type,
+      mime: header(d.responseHeaders, 'content-type'),
+      size: sizeFrom(d.responseHeaders),
+    });
+    if (changed) storeMedia(d.tabId, list);
+  },
+  { urls: ['<all_urls>'], types: ['media', 'image', 'xmlhttprequest', 'object', 'other'] },
+  ['responseHeaders'],
+);
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  mediaByTab.delete(tabId);
+  chrome.storage.session.remove(`media:${tabId}`).catch(() => {});
+});
+
 // ---- saving finished files ---------------------------------------------------
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -178,6 +252,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (msg?.type === 'clear-request-headers') {
     clearRequestHeaders(msg.id).then(sendResponse, () => sendResponse({}));
+    return true;
+  }
+  if (msg?.type === 'media-list') {
+    mediaList(msg.tabId).then((list) => sendResponse({ media: list }));
+    return true;
+  }
+  if (msg?.type === 'sniff-tab') {
+    chrome.tabs.get(msg.tabId).then(sniffPage).then(() => sendResponse({}), () => sendResponse({}));
+    return true;
+  }
+  if (msg?.type === 'open-manager') {
+    openManager().then(() => sendResponse({}));
     return true;
   }
   if (msg?.type === 'engine-state') updateBadge(msg.tasks);

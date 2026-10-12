@@ -2,3 +2,4 @@ node_modules/
 download-booster.zip
 test/last-e2e.json
 test/manager-screenshot.png
+test/popup-screenshot.png
