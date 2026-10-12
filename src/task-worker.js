@@ -16,6 +16,17 @@ import { parseContentRange, pickFilename, isThrottleStatus } from './http.js';
 const TICK_MS = 500;
 const CHECKPOINT_MS = 2000;
 const MAX_FAILURES = 8;
+const STALL_MS = 15000; // a connection silent this long is restarted
+const FRESH_MS = 3000; // a connection counts as streaming if data came this recently
+
+// Chrome keeps separate connection pools for requests with and without
+// cookies. On HTTP/2 every request to a host shares one TCP connection, so
+// alternating the two pools is the only way an extension gets a second TCP
+// connection. Cookie-less requests are dropped for the task if the server
+// answers them differently (login-protected files).
+const POOLS = ['include', 'omit'];
+let omitPool = 'untested'; // 'untested' | 'ok' | 'bad'
+let protocol = null;
 
 let task;
 let handle;
@@ -58,13 +69,35 @@ async function openFile() {
   handle = await fh.createSyncAccessHandle();
 }
 
-function fetchInit(headers, signal) {
+function fetchInit(headers, signal, credentials = 'include') {
   return {
     headers,
-    credentials: 'include',
+    credentials,
     cache: 'no-store',
     signal,
   };
+}
+
+// Pick the pool with the fewest running connections.
+function choosePool() {
+  if (omitPool === 'bad') return 'include';
+  const count = { include: 0, omit: 0 };
+  for (const c of conns.values()) count[c.pool] += 1;
+  return count.omit < count.include ? 'omit' : 'include';
+}
+
+// Resource Timing tells which protocol a finished request used; a 1-byte
+// request finishes at once, unlike the streaming download itself.
+async function detectProtocol() {
+  try {
+    const url = task.url;
+    await (await fetch(url, fetchInit({ Range: 'bytes=0-0' }))).arrayBuffer();
+    const entries = performance.getEntriesByName(url).filter((e) => e.nextHopProtocol);
+    protocol = entries.length ? entries[entries.length - 1].nextHopProtocol : null;
+    performance.clearResourceTimings();
+  } catch {
+    /* unknown protocol is fine */
+  }
 }
 
 async function start(t) {
@@ -78,6 +111,7 @@ async function start(t) {
     segments = task.segments.map((s) => ({ ...s }));
     beginTicking();
     schedule();
+    detectProtocol();
     return;
   }
   await probe();
@@ -151,7 +185,8 @@ async function probe() {
   segments = [{ id: 0, start: 0, end: size ?? Infinity, pos: 0 }];
   post({ type: 'meta', meta, segments });
   beginTicking();
-  runConn(segments[0], resp, ac);
+  runConn(segments[0], resp, ac, 'include');
+  if (rangeSupported) detectProtocol();
 }
 
 function reject(reason, ac) {
@@ -176,7 +211,12 @@ function tick() {
   const speed = meter.speed();
   peakSpeed = Math.max(peakSpeed, speed);
   if (task.rangeSupported) {
-    const streaming = [...conns.values()].filter((c) => c.streaming).length;
+    let streaming = 0;
+    for (const c of conns.values()) {
+      if (c.lastDataAt && now - c.lastDataAt <= FRESH_MS) streaming += 1;
+      // Stalled: connected but silent (or never answered). Restart it.
+      if (now - (c.lastDataAt || c.startedAt) > STALL_MS) c.ac.abort('stall');
+    }
     controller.tick(now, done, streaming);
   }
   schedule();
@@ -193,6 +233,8 @@ function tick() {
     downloaded: done,
     speed,
     connections: conns.size,
+    protocol,
+    pools: omitPool === 'ok' ? 2 : 1,
     segments: segments.map(({ id, start, end, pos }) => ({ id, start, end, pos })),
     controller: controller.snapshot(),
     stats: stats(),
@@ -230,18 +272,35 @@ function schedule() {
   }
 }
 
-async function runConn(seg, resp = null, ac = new AbortController()) {
-  const conn = { ac, seg, startedAt: Date.now() };
+class PoolError extends Error {}
+
+async function runConn(seg, resp = null, ac = new AbortController(), pool = choosePool()) {
+  const conn = { ac, seg, pool, startedAt: Date.now(), lastDataAt: 0 };
   conns.set(seg.id, conn);
   try {
     if (!resp) {
       const headers = { Range: `bytes=${seg.pos}-${seg.end - 1}` };
       const validator = task.etag && !task.etag.startsWith('W/') ? task.etag : task.lastModified;
       if (validator) headers['If-Range'] = validator;
-      resp = await fetch(task.url, fetchInit(headers, ac.signal));
+      try {
+        resp = await fetch(task.url, fetchInit(headers, ac.signal, pool));
+      } catch (err) {
+        if (pool === 'omit' && omitPool === 'untested' && !ac.signal.aborted) throw new PoolError(err.message);
+        throw err;
+      }
+      const cr = resp.status === 206 ? parseContentRange(resp.headers.get('content-range')) : null;
+      if (pool === 'omit') {
+        // Without cookies the server must hand out the very same file.
+        const etag = resp.headers.get('etag');
+        const same = cr && cr.start === seg.pos && cr.total === task.size && (!task.etag || !etag || etag === task.etag);
+        if (!same) {
+          ac.abort('pool');
+          throw new PoolError(`cookie-less request got ${resp.status}`);
+        }
+        omitPool = 'ok';
+      }
       if (resp.status === 200) throw new ChangedError('Server ignored the range');
       if (resp.status !== 206) throw new HttpError(resp.status);
-      const cr = parseContentRange(resp.headers.get('content-range'));
       if (!cr || cr.start !== seg.pos) throw new Error('Bad Content-Range');
     }
 
@@ -252,7 +311,7 @@ async function runConn(seg, resp = null, ac = new AbortController()) {
       let chunk = value;
       const room = seg.end - seg.pos;
       if (chunk.byteLength > room) chunk = chunk.subarray(0, room);
-      conn.streaming = true;
+      conn.lastDataAt = Date.now();
       if (chunk.byteLength) {
         handle.write(chunk, { at: seg.pos });
         seg.pos += chunk.byteLength;
@@ -273,6 +332,10 @@ async function runConn(seg, resp = null, ac = new AbortController()) {
     if (seg.pos < seg.end) throw new Error('Connection closed early');
   } catch (err) {
     if (stopping || ac.signal.reason === 'shrink' || ac.signal.reason === 'done') return;
+    if (err instanceof PoolError) {
+      omitPool = 'bad'; // retried right away from the cookie pool
+      return;
+    }
     onConnError(seg, err);
   } finally {
     if (conns.get(seg.id) === conn) conns.delete(seg.id);

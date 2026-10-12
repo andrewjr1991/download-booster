@@ -124,5 +124,8 @@
   },
   "maxActive": {
     "message": "Downloads at the same time"
+  },
+  "measured": {
+    "message": "measured $1"
   }
 }

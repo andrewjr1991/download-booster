@@ -124,5 +124,8 @@
   },
   "maxActive": {
     "message": "同时下载的任务数"
+  },
+  "measured": {
+    "message": "实测 $1"
   }
 }

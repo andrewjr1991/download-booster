@@ -8,12 +8,14 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { startServer } from './server.mjs';
+import { startH2Server } from './h2server.mjs';
 
 const EXT = process.env.EXT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SIZE_MB = Number(process.env.SIZE_MB || 40);
 const RATE = Number(process.env.RATE_KBPS || 2048);
 
 const srv = await startServer({ port: 8787, sizeMB: SIZE_MB, rateKBps: RATE });
+const h2 = await startH2Server({ port: 8443, sizeMB: SIZE_MB, rateKBps: RATE });
 const downloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dl-e2e-'));
 const userDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dl-profile-'));
 
@@ -23,7 +25,7 @@ const ctx = await chromium.launchPersistentContext(userDir, {
   executablePath: process.env.CHROMIUM || undefined,
   acceptDownloads: true,
   downloadsPath: downloadDir,
-  args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`],
+  args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, '--ignore-certificate-errors'],
 });
 
 let [sw] = ctx.serviceWorkers();
@@ -65,6 +67,7 @@ async function savedFileHash(downloadId) {
 
 const results = [];
 async function check(name, fn) {
+  if (process.env.ONLY && !name.includes(process.env.ONLY)) return;
   const t0 = Date.now();
   try {
     const info = await fn();
@@ -111,6 +114,43 @@ await check('slow first byte (1.5 s per request) still scales past 1 connection'
   const r = await download(`${srv.url}/file.bin?ttfb=1500`, { maxConnections: 6 });
   if (r.maxConns < 4) throw new Error(`peaked at ${r.maxConns} connections`);
   return `${mbps(srv.size, r.ms)}, peak ${r.maxConns} conns`;
+});
+
+await check('HTTP/2 with a per-connection limit: second connection pool doubles speed', async () => {
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6 });
+  const { id } = await engine('add', { url: `${h2.url}/file.bin`, maxConnections: 6 });
+  const t0 = Date.now();
+  let proto = null;
+  let maxConns = 0;
+  const done = await waitTask(id, (t) => {
+    proto ||= t.protocol;
+    maxConns = Math.max(maxConns, t.connections || 0);
+    return t.status === 'completed';
+  });
+  const ms = Date.now() - t0;
+  const { hash } = await savedFileHash(done.downloadId);
+  if (hash !== h2.sha256) throw new Error('hash mismatch');
+  const sessions = new Set(h2.log.map((l) => l.session)).size;
+  const single = (RATE * 1024) / 1048576;
+  const avg = h2.size / 1048576 / (ms / 1000);
+  if (avg < single * 1.4) throw new Error(`avg ${avg.toFixed(1)} MB/s vs ${single} MB/s per connection (protocol ${proto}, ${sessions} sessions)`);
+  return `${avg.toFixed(1)} MB/s (one connection: ${single} MB/s), protocol ${proto}, peak ${maxConns} requests, levels ${JSON.stringify(done.stats.levels)}`;
+});
+
+await check('login-protected file: cookie-less pool is dropped, download still completes', async () => {
+  await ctx.addCookies([{ name: 'session', value: '1', domain: '127.0.0.1', path: '/' }]);
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6 });
+  const mark = srv.log.length;
+  const { id } = await engine('add', { url: `${srv.url}/cookie.bin`, maxConnections: 6 });
+  let maxConns = 0;
+  const done = await waitTask(id, (t) => {
+    maxConns = Math.max(maxConns, t.connections || 0);
+    return t.status === 'completed';
+  });
+  const { hash } = await savedFileHash(done.downloadId);
+  if (hash !== srv.sha256) throw new Error('hash mismatch');
+  const reqs = srv.log.slice(mark).filter((l) => l.path === '/cookie.bin');
+  return `peak ${maxConns} conns, ${reqs.filter((l) => !l.cookie).length} cookie-less request(s) refused then dropped`;
 });
 
 await check('server without Range support falls back to one stream', async () => {
@@ -237,6 +277,7 @@ await check('small files are left to the browser', async () => {
 await page.screenshot({ path: path.join(EXT, 'test', 'manager-screenshot.png'), fullPage: true });
 await ctx.close();
 srv.server.close();
+h2.server.close();
 fs.writeFileSync(path.join(EXT, 'test', 'last-e2e.json'), JSON.stringify(results, null, 2));
 const failed = results.filter((r) => !r.ok).length;
 console.log(`\n${results.length - failed}/${results.length} passed`);

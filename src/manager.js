@@ -111,11 +111,25 @@ function compareLine(task) {
   if (task.rangeSupported === false) return t('noRange');
   const st = task.stats;
   if (!st?.activeMs) return '';
+  if (task.status === 'downloading') return levelsLine(task);
   const avg = (task.status === 'completed' ? task.size : task.downloaded) / (st.activeMs / 1000);
   if (st.singleSpeed > 0 && task.status !== 'downloading') {
-    return t('speedCompare', [speed(st.singleSpeed), speed(avg), (avg / st.singleSpeed).toFixed(1)]);
+    const levels = levelsLine(task);
+    const cmp = t('speedCompare', [speed(st.singleSpeed), speed(avg), (avg / st.singleSpeed).toFixed(1)]);
+    return levels ? `${cmp} · ${levels}` : cmp;
   }
   return task.status === 'completed' ? t('avgSpeed', [speed(avg)]) : '';
+}
+
+// What the adaptive controller measured at each connection count, so a
+// user can see why it settled where it did.
+function levelsLine(task) {
+  const levels = Object.entries(task.stats?.levels || {}).sort((a, b) => a[0] - b[0]);
+  const parts = [];
+  const proto = { h2: 'HTTP/2', h3: 'HTTP/3', 'http/1.1': 'HTTP/1.1' }[task.protocol];
+  if (proto) parts.push(proto);
+  if (levels.length) parts.push(t('measured', [levels.map(([n, v]) => `${n}→${speed(v)}`).join('  ')]));
+  return parts.join(' · ');
 }
 
 function renderActions(box, task) {
