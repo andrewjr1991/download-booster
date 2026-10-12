@@ -5,6 +5,8 @@
 //   /file.bin       Range-capable, ETag, throttled per request
 //   /norange.bin    same bytes, ignores Range (always 200)
 //   /flaky.bin      Range-capable but every 4th request is answered 503
+//   /hotlink.bin    like /file.bin but 403 unless Referer is this server's /page
+//   /page           an HTML page linking to /hotlink.bin
 // Add ?ttfb=1500 to delay every response by that many ms (a far-away CDN).
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -28,12 +30,21 @@ export function startServer({ port = 8787, sizeMB = 40, rateKBps = 2048 } = {}) 
     requests++;
     const path = new URL(req.url, 'http://x').pathname;
     const range = req.headers.range;
-    log.push({ path, range, ifRange: req.headers['if-range'] });
+    log.push({ path, range, ifRange: req.headers['if-range'], referer: req.headers.referer });
     if (path === '/flaky.bin' && requests % 4 === 0) {
       res.writeHead(503).end();
       return;
     }
-    if (!['/file.bin', '/norange.bin', '/flaky.bin'].includes(path)) {
+    if (path === '/page') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<a id="a" href="/hotlink.bin">download</a>');
+      return;
+    }
+    if (path === '/hotlink.bin' && !(req.headers.referer || '').startsWith(`http://127.0.0.1:${port}/page`)) {
+      res.writeHead(403).end('hotlinking not allowed');
+      return;
+    }
+    if (!['/file.bin', '/norange.bin', '/flaky.bin', '/hotlink.bin'].includes(path)) {
       res.writeHead(404).end();
       return;
     }
