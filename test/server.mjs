@@ -16,9 +16,15 @@
 //                   unless the Referer is /hlspage. Joined they equal hlsPlain.
 //   /media2         a page with a playable /tone.wav (1 s) and /pic.bmp (200×150),
 //                   which is 403 unless the Referer is /media2
+//   /msepage        a blob: video: the page feeds MediaSource the fragmented MP4s in
+//                   test/fixtures (separate video and audio) in small pieces.
+//                   Joined they equal mseSha256. ?end=0 feeds only the first half
+//                   and never ends the stream.
 // Add ?ttfb=1500 to delay every response by that many ms (a far-away CDN).
 import http from 'node:http';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import { Mp4Stream, mux } from '../src/fmp4.js';
 
 export function startServer({ port = 8787, sizeMB = 40, rateKBps = 2048 } = {}) {
   const size = sizeMB * 1024 * 1024;
@@ -37,6 +43,22 @@ export function startServer({ port = 8787, sizeMB = 40, rateKBps = 2048 } = {}) 
     return Buffer.concat([c.update(hlsPlain.subarray(i * 262144, (i + 1) * 262144)), c.final()]);
   });
   const hlsSha256 = crypto.createHash('sha256').update(hlsPlain).digest('hex');
+  const fixture = (name) => fs.readFileSync(new URL(`./fixtures/${name}`, import.meta.url));
+  const mseFiles = { '/mse/video.mp4': fixture('video.mp4'), '/mse/audio.mp4': fixture('audio.mp4') };
+  const mseSha256 = crypto
+    .createHash('sha256')
+    .update(
+      Buffer.concat(
+        mux(
+          Object.values(mseFiles).map((b) => {
+            const st = new Mp4Stream();
+            st.push(new Uint8Array(b));
+            return st.settle();
+          }),
+        ),
+      ),
+    )
+    .digest('hex');
   const bmp = bitmap(200, 150);
   let requests = 0;
   const log = [];
@@ -114,6 +136,35 @@ export function startServer({ port = 8787, sizeMB = 40, rateKBps = 2048 } = {}) 
         res.writeHead(200, { 'Content-Type': 'video/mp2t' });
         res.end(hlsPieces[Number(seg[2])]);
       } else res.writeHead(404).end();
+      return;
+    }
+    if (path === '/msepage') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(`<title>MSE demo</title><video controls muted></video><script>
+const v = document.querySelector('video');
+const ms = new MediaSource();
+v.src = URL.createObjectURL(ms);
+ms.addEventListener('sourceopen', async () => {
+  const full = new URLSearchParams(location.search).get('end') !== '0';
+  const feed = async (mime, url) => {
+    const sb = ms.addSourceBuffer(mime);
+    const b = new Uint8Array(await (await fetch(url)).arrayBuffer());
+    const end = full ? b.length : b.length >> 1;
+    for (let at = 0; at < end; at += 16384) {
+      sb.appendBuffer(b.subarray(at, Math.min(end, at + 16384)));
+      await new Promise((r) => sb.addEventListener('updateend', r, { once: true }));
+      await new Promise((r) => setTimeout(r, 30));
+    }
+  };
+  await Promise.all([feed('video/mp4; codecs="vp09.00.10.08"', '/mse/video.mp4'), feed('audio/mp4; codecs="opus"', '/mse/audio.mp4')]);
+  if (full) ms.endOfStream();
+});
+</script>`);
+      return;
+    }
+    if (mseFiles[path]) {
+      res.writeHead(200, { 'Content-Type': 'video/mp4' });
+      res.end(mseFiles[path]);
       return;
     }
     if (path === '/media2') {
@@ -197,7 +248,7 @@ export function startServer({ port = 8787, sizeMB = 40, rateKBps = 2048 } = {}) 
   }
 
   return new Promise((resolve) => {
-    server.listen(port, '127.0.0.1', () => resolve({ server, size, sha256, hlsSha256, log, url: `http://127.0.0.1:${port}` }));
+    server.listen(port, '127.0.0.1', () => resolve({ server, size, sha256, hlsSha256, mseSha256, log, url: `http://127.0.0.1:${port}` }));
   });
 }
 

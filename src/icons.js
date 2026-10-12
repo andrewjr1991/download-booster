@@ -26,6 +26,8 @@ export const ICONS = {
   link: wrap('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>'),
   prev: wrap('<path d="m15 5-7 7 7 7"/>'),
   next: wrap('<path d="m9 5 7 7-7 7"/>'),
+  record: wrap('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5" fill="currentColor"/>'),
+  stop: wrap('<rect x="6" y="6" width="12" height="12" rx="2"/>'),
   check: wrap('<path d="m5 12 5 5 9-10"/>'),
 };
 

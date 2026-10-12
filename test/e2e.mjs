@@ -34,6 +34,8 @@ const extId = new URL(sw.url()).host;
 const page = await ctx.newPage();
 page.on('console', (m) => process.env.VERBOSE && console.log('[manager]', m.text()));
 await page.goto(`chrome-extension://${extId}/src/manager.html`);
+// The manager sends the saved limits on load; let that land before tests set their own.
+await page.waitForSelector('body[data-synced]');
 
 const engine = (cmd, args = {}) => page.evaluate(([cmd, args]) => chrome.runtime.sendMessage({ type: 'engine', cmd, ...args }), [cmd, args]);
 const setSettings = (s) => page.evaluate((s) => chrome.storage.local.set({ settings: s }), s);
@@ -311,6 +313,56 @@ await check('sniffing a page lists its files and downloads the picked ones with 
   return `chips ${chips.join(' ')}, 1 file picked, ${ours.length} requests with Referer`;
 });
 
+async function sniffInManager(url) {
+  const p = await ctx.newPage();
+  await p.goto(url);
+  await sleep(1500); // let the page load its media
+  await sw.evaluate(async (u) => {
+    const [tab] = await chrome.tabs.query({ url: u });
+    await sniffPage(tab);
+  }, url);
+  await page.waitForURL(/sniff=1/);
+  await page.waitForSelector('#sniff:not([hidden]) #sniff-list li');
+  const chips = await page.$$eval('#sniff-filters button', (bs) => bs.map((b) => `${b.dataset.cat}:${b.getAttribute('aria-pressed')}`));
+  return { p, chips };
+}
+
+await check('manager sniff list includes the audio and images the page loaded, with previews', async () => {
+  const { p, chips } = await sniffInManager(`${srv.url}/media2`);
+  if (!chips.includes('audio:true') || !chips.includes('image:false')) throw new Error(`chips ${JSON.stringify(chips)}`);
+  const audioRow = await page.textContent('#sniff-list li');
+  if (!audioRow.includes('tone.wav') || !/KB/.test(audioRow)) throw new Error(`audio row "${audioRow}"`);
+  await page.click('#sniff-filters button[data-cat="image"]');
+  // The thumbnail of the hotlink-protected picture loads with the page's Referer.
+  await page.waitForFunction(() => document.querySelector('#sniff-list .lthumb')?.naturalWidth === 200, null, { timeout: 10000 });
+  const imgRow = await page.$('#sniff-list li:has(.lthumb)');
+  await (await imgRow.$('.lpreview')).click();
+  await page.waitForFunction(() => document.querySelector('#sp-info').textContent.includes('200×150'), null, { timeout: 10000 });
+  const info = await page.textContent('#sp-info');
+  await page.click('#sp-close');
+  await page.click('#sniff-close');
+  await p.close();
+  return `chips ${chips.join(' ')}, audio row "${audioRow.trim()}", image preview "${info}"`;
+});
+
+await check('manager sniff list downloads a page’s m3u8 as one joined video', async () => {
+  const before = (await engine('list')).tasks.map((t) => t.id);
+  const { p, chips } = await sniffInManager(`${srv.url}/hlspage`);
+  if (!chips.includes('stream:true')) throw new Error(`chips ${JSON.stringify(chips)}`);
+  await page.click('#sniff-go');
+  let task;
+  for (let i = 0; i < 20 && !task; i++) {
+    await sleep(250);
+    task = (await engine('list')).tasks.find((t) => !before.includes(t.id));
+  }
+  if (!task || task.kind !== 'hls') throw new Error(`added ${JSON.stringify(task && task.kind)}`);
+  const done = await waitTask(task.id, (t) => t.status === 'completed', 60000);
+  const { hash } = await savedFileHash(done.downloadId);
+  if (hash !== srv.hlsSha256) throw new Error('joined file differs from the original');
+  await p.close();
+  return `chips ${chips.join(' ')}, saved ${done.filename}`;
+});
+
 await check('speed limit: all tasks together stay under it, and lifting it speeds up', async () => {
   const LIMIT = 1.5 * 1048576;
   await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6, speedLimitMB: 1.5 });
@@ -393,6 +445,7 @@ await check('popup previews: hotlink-protected image full size, audio plays', as
   await pop.waitForFunction(() => document.querySelector('#media-list li.tile img')?.naturalWidth > 0, null, { timeout: 10000 });
   await pop.click('#media-list li.tile');
   await pop.waitForFunction(() => document.querySelector('#pv-stage img')?.naturalWidth === 200, null, { timeout: 10000 });
+  await pop.waitForFunction(() => document.querySelector('#pv-info').textContent.includes('200×150'), null, { timeout: 5000 });
   const imageInfo = await pop.textContent('#pv-info');
   await pop.screenshot({ path: path.join(EXT, 'test', 'preview-screenshot.png') });
   // Select from the preview, then the bulk button counts it.
@@ -427,8 +480,9 @@ await check('m3u8: pick a quality, encrypted pieces from another host are joined
   const task = (await engine('list')).tasks.find((t) => !before.includes(t.id));
   if (!task) throw new Error('nothing added');
   const done = await waitTask(task.id, (t) => t.status === 'completed', 60000);
-  const { hash } = await savedFileHash(done.downloadId);
+  const { hash, item } = await savedFileHash(done.downloadId);
   if (hash !== srv.hlsSha256) throw new Error('joined file differs from the original');
+  if (item.mime !== 'video/mp2t') throw new Error(`saved as type ${item.mime}`);
   if (done.filename !== 'HLS demo.ts') throw new Error(`saved as ${done.filename}`);
   const pieces = srv.log.filter((l) => /\/hls\/hi\/seg\d+\.ts$/.test(l.path));
   if (pieces.some((l) => !l.referer)) throw new Error('a piece was requested without Referer');
@@ -458,6 +512,61 @@ await check('m3u8: pause and resume continues from the pieces already joined', a
   const again = srv.log.slice(mark).filter((l) => /seg\d+\.ts$/.test(l.path)).length;
   if (again >= 8) throw new Error(`fetched all ${again} pieces again`);
   return `paused at ${paused.hls.done}/8 pieces, ${again} fetched after resume`;
+});
+
+async function recordFrom(url, stop) {
+  const p = await ctx.newPage();
+  await p.goto(url);
+  await sleep(1000);
+  const tabId = await sw.evaluate(async (u) => (await chrome.tabs.query({ url: u }))[0].id, url);
+  const pop = await ctx.newPage();
+  await pop.setViewportSize({ width: 400, height: 520 });
+  await pop.goto(`chrome-extension://${extId}/src/popup.html?tab=${tabId}`);
+  await pop.waitForSelector('#record:not([hidden])');
+  const before = (await engine('list')).tasks.map((t) => t.id);
+  await pop.click('#rec-go'); // reloads the page with the recorder in place
+  await pop.waitForSelector('#record[data-state="on"]');
+  if (stop) {
+    await pop.waitForFunction(() => /\d/.test(document.querySelector('#rec-sub').textContent) && !/ 0 B/.test(document.querySelector('#rec-sub').textContent));
+    await sleep(2500); // the page appends half the video, then stalls
+    await pop.screenshot({ path: path.join(EXT, 'test', 'record-screenshot.png') });
+    await pop.click('#rec-go');
+  }
+  const t0 = Date.now();
+  let task;
+  while (!(task = (await engine('list')).tasks.find((t) => !before.includes(t.id) && t.kind === 'record'))) {
+    if (Date.now() - t0 > 30000) throw new Error('no recording was saved');
+    await sleep(250);
+  }
+  const done = await waitTask(task.id, (t) => t.status === 'completed', 30000);
+  const scripts = await sw.evaluate(() => chrome.scripting.getRegisteredContentScripts());
+  if (scripts.length) throw new Error('recorder still registered after the recording');
+  await pop.close();
+  await p.close();
+  return done;
+}
+
+await check('recording a blob: video joins the player’s separate video and audio into one mp4', async () => {
+  const done = await recordFrom(`${srv.url}/msepage`, false);
+  const { hash, item } = await savedFileHash(done.downloadId);
+  if (hash !== srv.mseSha256) throw new Error('recorded file differs from the joined original');
+  // Without a type Chrome calls it text/plain and Windows renames it .txt.
+  if (item.mime !== 'video/mp4') throw new Error(`saved as type ${item.mime}`);
+  if (done.filename !== 'MSE demo.mp4') throw new Error(`saved as ${done.filename}`);
+  return `finished on its own when the player ended the stream, saved ${done.filename} (${done.size} bytes), identical to the expected join`;
+});
+
+await check('recording: stopping by hand saves what was loaded so far', async () => {
+  const done = await recordFrom(`${srv.url}/msepage?end=0`, true);
+  const { item } = await savedFileHash(done.downloadId);
+  const { children, parseMoov } = await import(path.join(EXT, 'src', 'fmp4.js'));
+  const b = new Uint8Array(fs.readFileSync(item.filename));
+  const top = children(b);
+  const moov = top.find((x) => x.type === 'moov');
+  const tracks = parseMoov(b.slice(moov.start, moov.end)).tracks.map((x) => x.handler);
+  const frags = top.filter((x) => x.type === 'moof').length;
+  if (tracks.join() !== 'vide,soun' || frags < 2) throw new Error(`tracks ${tracks}, ${frags} fragments`);
+  return `saved ${done.size} bytes: tracks ${tracks.join('+')}, ${frags} fragments`;
 });
 
 await check('small files are left to the browser', async () => {

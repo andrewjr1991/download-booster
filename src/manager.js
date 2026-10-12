@@ -249,17 +249,27 @@ const CATEGORY_KEYS = {
   disk: 'catDisk',
   document: 'catDocument',
   image: 'catImage',
+  stream: 'catStream',
   other: 'catOther',
 };
 // Pictures and plain web pages are on almost every page; they start hidden.
 const HIDDEN_BY_DEFAULT = new Set(['image', 'other']);
-const sniff = { pageUrl: null, links: [], cats: new Set(), checked: new Set() };
+const sniff = { pageUrl: null, title: '', links: [], cats: new Set(), checked: new Set() };
+const PREVIEWABLE = new Set(['video', 'audio', 'image']);
 
 async function openSniff() {
   const { sniff: data } = await chrome.storage.session.get('sniff');
   if (!data) return;
   sniff.pageUrl = data.pageUrl;
+  sniff.title = data.title || '';
   sniff.links = data.links || [];
+  // Thumbnails and previews need the page's Referer on hotlink-protected sites.
+  const media = sniff.links.filter((l) => PREVIEWABLE.has(l.category)).map((l) => l.url);
+  if (media.length && sniff.pageUrl) {
+    await chrome.runtime
+      .sendMessage({ type: 'request-headers', id: 'manager-sniff', urls: media, referrer: sniff.pageUrl, pages: true })
+      .catch(() => {});
+  }
   const present = new Set(sniff.links.map((l) => l.category));
   sniff.cats = new Set([...present].filter((c) => !HIDDEN_BY_DEFAULT.has(c)));
   if (!sniff.cats.size) sniff.cats = present;
@@ -278,7 +288,9 @@ async function openSniff() {
 
 function closeSniff() {
   $('#sniff').hidden = true;
+  closePreview();
   chrome.storage.session.remove('sniff');
+  chrome.runtime.sendMessage({ type: 'clear-request-headers', id: 'manager-sniff' }).catch(() => {});
   history.replaceState(null, '', location.pathname + (DEBUG ? '?debug' : ''));
 }
 
@@ -348,8 +360,33 @@ function renderSniff() {
       url.className = 'lurl';
       url.textContent = readableUrl(l.url).replace(/^https?:\/\//, '');
       url.title = l.url;
-      label.append(box, name, url);
+      label.append(box);
+      if (l.category === 'image') {
+        const img = document.createElement('img');
+        img.className = 'lthumb';
+        img.loading = 'lazy';
+        img.alt = '';
+        img.src = l.url;
+        label.append(img);
+      }
+      label.append(name);
+      if (l.size) {
+        const size = document.createElement('span');
+        size.className = 'lsize';
+        size.textContent = bytes(l.size);
+        label.append(size);
+      }
+      label.append(url);
       li.append(label);
+      if (PREVIEWABLE.has(l.category)) {
+        const pv = document.createElement('button');
+        pv.type = 'button';
+        pv.className = 'icon lpreview';
+        pv.title = t('preview');
+        pv.innerHTML = ICONS.play;
+        pv.onclick = () => openPreview(l);
+        li.append(pv);
+      }
       return li;
     }),
   );
@@ -380,12 +417,57 @@ $('#sniff-all').addEventListener('change', (e) => {
 $('#sniff-search').addEventListener('input', renderSniff);
 $('#sniff-close').addEventListener('click', closeSniff);
 $('#sniff-go').addEventListener('click', async () => {
-  const urls = selectedLinks().map((l) => l.url);
-  if (!urls.length) return;
+  const picked = selectedLinks();
+  if (!picked.length) return;
   // Sent with the page as Referer, as a click on the page would.
-  await addUrls(urls, { source: 'sniff', referrer: sniff.pageUrl });
+  const files = picked.filter((l) => l.category !== 'stream').map((l) => l.url);
+  if (files.length) await addUrls(files, { source: 'sniff', referrer: sniff.pageUrl });
+  // m3u8: download the pieces (best quality) and join them, named after the page.
+  for (const l of picked.filter((x) => x.category === 'stream')) {
+    await addUrls([l.url], { kind: 'hls', filename: sniff.title || undefined, source: 'sniff', referrer: sniff.pageUrl });
+  }
   closeSniff();
-  note(t('addedCount', [String(urls.length)]));
+  note(t('addedCount', [String(picked.length)]));
+});
+
+// ---- preview of a sniffed image, audio or video -----------------------------
+
+function openPreview(l) {
+  const box = $('#sniff-preview');
+  const el = document.createElement(l.category === 'image' ? 'img' : l.category);
+  if (l.category !== 'image') {
+    el.controls = true;
+    el.autoplay = true;
+  }
+  el.src = l.url;
+  el.onerror = () => ($('#sp-info').textContent = t('previewFailed'));
+  const info = () => {
+    const parts = [];
+    if (el.naturalWidth) parts.push(`${el.naturalWidth}×${el.naturalHeight}`);
+    if (Number.isFinite(el.duration)) parts.push(duration(el.duration));
+    if (el.videoWidth) parts.push(`${el.videoWidth}×${el.videoHeight}`);
+    if (l.size) parts.push(bytes(l.size));
+    $('#sp-info').textContent = parts.join(' · ');
+  };
+  el.onload = info;
+  el.onloadedmetadata = info;
+  $('#sp-stage').replaceChildren(el);
+  $('#sp-name').textContent = linkName(l);
+  $('#sp-info').textContent = l.size ? bytes(l.size) : '';
+  box.hidden = false;
+}
+
+function closePreview() {
+  $('#sp-stage').querySelector('video, audio')?.pause();
+  $('#sp-stage').replaceChildren();
+  $('#sniff-preview').hidden = true;
+}
+$('#sp-close').addEventListener('click', closePreview);
+$('#sniff-preview').addEventListener('click', (e) => {
+  if (e.target.id === 'sniff-preview') closePreview();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('#sniff-preview').hidden) closePreview();
 });
 
 $('#clear').addEventListener('click', async () => {
@@ -428,5 +510,6 @@ loadSettings().then(async () => {
     speedLimit: (Number($('#speedLimitMB').value) || 0) * MB,
   });
   refresh();
+  document.body.dataset.synced = '1'; // tests wait for this before changing limits
 });
 if (new URLSearchParams(location.search).has('sniff')) openSniff();

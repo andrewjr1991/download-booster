@@ -253,5 +253,41 @@
   },
   "loading": {
     "message": "Loading…"
+  },
+  "recordTitle": {
+    "message": "Page video (blob stream)"
+  },
+  "recordHint": {
+    "message": "This video can't be downloaded directly. Recording reloads the page, keeps everything the player loads from the start, and joins it into one file."
+  },
+  "recordFast": {
+    "message": "Faster: play muted at 16×"
+  },
+  "recordStart": {
+    "message": "Record"
+  },
+  "recordStop": {
+    "message": "Stop and save"
+  },
+  "recording": {
+    "message": "Recording"
+  },
+  "recordProgress": {
+    "message": "$1 recorded · loaded up to $2"
+  },
+  "recordPlay": {
+    "message": "If the video hasn't started, press play on the page. Keep this tab open until it finishes."
+  },
+  "recordSaving": {
+    "message": "Saving…"
+  },
+  "recordSaved": {
+    "message": "Saved $1 file(s), see Downloads"
+  },
+  "recordNothing": {
+    "message": "Nothing was recorded"
+  },
+  "recordDrm": {
+    "message": "This video is DRM-protected, so it can't be recorded."
   }
 }

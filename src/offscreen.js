@@ -62,8 +62,12 @@ async function handle(msg) {
       if (t && workers.has(t.id)) workers.get(t.id).postMessage({ type: 'pause' });
       else if (t?.status === 'queued') setStatus(t, 'paused');
       return { ok: true };
+    case 'import':
+      return importFile(msg);
     case 'resume':
-      if (t && (t.status === 'paused' || t.status === 'error')) {
+      // A recording is already complete: only saving it can be retried.
+      if (t?.kind === 'record' && t.status === 'error') await save(t);
+      else if (t && (t.status === 'paused' || t.status === 'error')) {
         if (!t.rangeSupported) t.segments = null; // no ranges: start over
         enqueue(t);
       }
@@ -316,13 +320,71 @@ async function onWorkerMessage(t, m) {
   broadcast();
 }
 
+// A file made elsewhere in the extension (a recording) that is already in
+// OPFS: list it and save it like a finished download.
+async function importFile({ opfsName, size, filename, referrer }) {
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  const t = {
+    id,
+    url: referrer || '',
+    filename,
+    size,
+    downloaded: size,
+    rangeSupported: false,
+    opfsName,
+    segments: null,
+    status: 'saving',
+    error: null,
+    speed: 0,
+    connections: 0,
+    stats: null,
+    controller: null,
+    source: 'record',
+    referrer: null,
+    kind: 'record',
+    hls: null,
+    createdAt: now,
+    finishedAt: now,
+    downloadId: null,
+  };
+  tasks.set(id, t);
+  await save(t);
+  broadcast();
+  return { id };
+}
+
+const TYPES = {
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  m4a: 'audio/mp4',
+  webm: 'video/webm',
+  ts: 'video/mp2t',
+  mkv: 'video/x-matroska',
+  mov: 'video/quicktime',
+  mp3: 'audio/mpeg',
+  aac: 'audio/aac',
+  flac: 'audio/flac',
+  ogg: 'audio/ogg',
+  wav: 'audio/wav',
+};
+
+// The saved file's type from its name; anything else is plain binary, which
+// Chrome leaves under the name it was given.
+function typeFor(filename) {
+  const ext = /\.([a-z0-9]+)$/i.exec(filename || '')?.[1]?.toLowerCase();
+  return TYPES[ext] || 'application/octet-stream';
+}
+
 // Hand the finished OPFS file to chrome.downloads (via the background, since
 // offscreen documents only get chrome.runtime).
 async function save(t) {
   setStatus(t, 'saving');
   try {
     const file = await getOpfsFile(t);
-    const url = URL.createObjectURL(file);
+    // OPFS files have no type, and Chrome then treats the blob as text/plain:
+    // on Windows that renames "video.mp4" to "video.txt". Give it a real one.
+    const url = URL.createObjectURL(file.slice(0, file.size, typeFor(t.filename)));
     blobUrls.set(t.id, url);
     const res = await chrome.runtime.sendMessage({
       type: 'save-file',

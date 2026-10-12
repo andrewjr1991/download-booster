@@ -253,5 +253,41 @@
   },
   "loading": {
     "message": "加载中…"
+  },
+  "recordTitle": {
+    "message": "网页视频（blob 流）"
+  },
+  "recordHint": {
+    "message": "这类视频不能直接下载。录制会刷新页面，从头保存播放器加载的视频数据，最后合成一个文件。"
+  },
+  "recordFast": {
+    "message": "加速：静音 16 倍速播放"
+  },
+  "recordStart": {
+    "message": "开始录制"
+  },
+  "recordStop": {
+    "message": "停止并保存"
+  },
+  "recording": {
+    "message": "录制中"
+  },
+  "recordProgress": {
+    "message": "已录 $1 · 视频加载到 $2"
+  },
+  "recordPlay": {
+    "message": "如果视频没有开始播放，请在页面上点一下播放。录完之前不要关闭这个标签页。"
+  },
+  "recordSaving": {
+    "message": "正在保存…"
+  },
+  "recordSaved": {
+    "message": "已保存 $1 个文件，见“下载任务”"
+  },
+  "recordNothing": {
+    "message": "没有录到视频数据"
+  },
+  "recordDrm": {
+    "message": "这个视频有 DRM 加密保护，无法录制。"
   }
 }

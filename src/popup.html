@@ -19,6 +19,20 @@
     </nav>
 
     <section id="view-media" class="view">
+      <div id="record" class="record" hidden>
+        <div class="rec-head">
+          <span class="rec-icon"></span>
+          <div class="info">
+            <span class="name" id="rec-title"></span>
+            <span class="sub" id="rec-sub"></span>
+          </div>
+        </div>
+        <p class="hint" id="rec-hint"></p>
+        <div class="rec-foot">
+          <label id="rec-fast-label"><input type="checkbox" id="rec-fast" checked /> <span data-i18n="recordFast"></span></label>
+          <button id="rec-go" class="primary"></button>
+        </div>
+      </div>
       <div id="kinds" class="chips"></div>
       <ul id="media-list" class="list"></ul>
       <div id="media-empty" class="empty" hidden>
