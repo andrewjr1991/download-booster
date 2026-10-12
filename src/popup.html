@@ -40,6 +40,21 @@
       <span id="toast" class="hint" role="status"></span>
     </footer>
 
+    <div id="preview" hidden>
+      <div class="pv-head">
+        <button id="pv-prev" class="icon" data-i18n-title="previous"></button>
+        <span id="pv-name" class="pv-name"></span>
+        <button id="pv-next" class="icon" data-i18n-title="next"></button>
+        <button id="pv-close" class="icon" data-i18n-title="close"></button>
+      </div>
+      <div id="pv-stage" class="pv-stage"></div>
+      <p id="pv-info" class="hint pv-info"></p>
+      <div class="pv-foot">
+        <button id="pv-select" class="ghost"></button>
+        <button id="pv-download" class="primary"></button>
+      </div>
+    </div>
+
     <script type="module" src="popup.js"></script>
   </body>
 </html>

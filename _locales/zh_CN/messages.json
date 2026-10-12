@@ -220,5 +220,23 @@
   },
   "copied": {
     "message": "已复制链接"
+  },
+  "preview": {
+    "message": "预览"
+  },
+  "previewFailed": {
+    "message": "这里无法播放，不影响下载。"
+  },
+  "previous": {
+    "message": "上一个"
+  },
+  "next": {
+    "message": "下一个"
+  },
+  "select": {
+    "message": "选中"
+  },
+  "selected": {
+    "message": "已选中"
   }
 }

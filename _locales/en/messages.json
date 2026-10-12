@@ -220,5 +220,23 @@
   },
   "copied": {
     "message": "Link copied"
+  },
+  "preview": {
+    "message": "Preview"
+  },
+  "previewFailed": {
+    "message": "Can't play this here; it may still download fine."
+  },
+  "previous": {
+    "message": "Previous"
+  },
+  "next": {
+    "message": "Next"
+  },
+  "select": {
+    "message": "Select"
+  },
+  "selected": {
+    "message": "Selected"
   }
 }

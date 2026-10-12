@@ -308,7 +308,7 @@ function urlFilterFor(url) {
   return /[*^|]/.test(clean) ? null : `|${clean}|`;
 }
 
-async function setRequestHeaders({ id, urls, referrer }) {
+async function setRequestHeaders({ id, urls, referrer, pages = false }) {
   if (!referrer || !/^https?:/i.test(referrer)) return { ok: true };
   const { [RULE_IDS_KEY]: map = {} } = await chrome.storage.session.get(RULE_IDS_KEY);
   const used = new Set(Object.values(map).flat());
@@ -330,8 +330,11 @@ async function setRequestHeaders({ id, urls, referrer }) {
       condition: {
         urlFilter,
         initiatorDomains: [chrome.runtime.id],
-        tabIds: [chrome.tabs.TAB_ID_NONE],
-        resourceTypes: ['xmlhttprequest', 'other'],
+        // Engine requests come from no tab; previews come from our own
+        // pages, which can be in a tab (the manager) or not (the popup).
+        ...(pages ? {} : { tabIds: [chrome.tabs.TAB_ID_NONE] }),
+        // media/image: previews in the popup are played by the extension too.
+        resourceTypes: ['xmlhttprequest', 'other', 'media', 'image'],
       },
     });
   }
