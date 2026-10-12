@@ -248,9 +248,6 @@
   "aes128": {
     "message": "AES-128 加密（可解密）"
   },
-  "videoOnly": {
-    "message": "仅画面：音频是单独的流"
-  },
   "loading": {
     "message": "加载中…"
   },
@@ -334,5 +331,8 @@
   },
   "ruleImagePlaceholder": {
     "message": "例如 jfif"
+  },
+  "separateAudio": {
+    "message": "+ 音轨 $1（一起下载并合并）"
   }
 }

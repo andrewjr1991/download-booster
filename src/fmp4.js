@@ -97,7 +97,7 @@ function equal(a, b) {
 // are cut out as they complete. `keep` stores the big media data (the
 // recorder turns it into a Blob so it can live on disk).
 export class Mp4Stream {
-  constructor({ keep = (bytes) => bytes } = {}) {
+  constructor({ keep = (bytes) => bytes.slice() } = {}) {
     this.keep = keep;
     this.pending = null;
     this.ftyp = null;
@@ -149,7 +149,7 @@ export class Mp4Stream {
       this.fragments.push({
         init: this.init,
         moof,
-        mdat: this.keep(bytes.slice()),
+        mdat: this.keep(bytes),
         size: moof.length + bytes.length,
         time: fragmentTime(moof, this.inits[this.init].timescales),
       });
@@ -171,6 +171,30 @@ export class Mp4Stream {
       .filter((f) => !seen.has(f.time) && seen.add(f.time));
     return { ...this.inits[best], fragments, switched: bytes.size > 1 };
   }
+}
+
+// A whole fMP4 file already on disk, read through `read(at, length)` (sync,
+// returns bytes). Only box headers and the small boxes are read: each media
+// data box stays where it is, as { at, length } for the caller to copy.
+export function scanFile(read, size) {
+  const s = new Mp4Stream({ keep: (ref) => ref });
+  let at = 0;
+  while (size - at >= 8) {
+    const head = read(at, Math.min(16, size - at));
+    let len = u32(head, 0);
+    let header = 8;
+    if (len === 1) {
+      if (head.length < 16) break;
+      len = u64(head, 8);
+      header = 16;
+    } else if (len === 0) len = size - at;
+    if (len < header || at + len > size) break;
+    const kind = type(head, 4);
+    if (kind === 'mdat') s.box(kind, { at, length: len });
+    else if (kind === 'ftyp' || kind === 'moov' || kind === 'moof') s.box(kind, read(at, len));
+    at += len;
+  }
+  return s;
 }
 
 function box(kind, parts) {

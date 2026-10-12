@@ -622,6 +622,54 @@ await check('recording: stopping by hand saves what was loaded so far', async ()
   return `saved ${done.size} bytes: tracks ${tracks.join('+')}, ${frags} fragments`;
 });
 
+await check('m3u8 with separate audio (CMAF): video and audio are joined into one mp4', async () => {
+  await engine('set-limit', { maxActive: 3, speedLimit: 0 });
+  const { id } = await engine('add', { url: `${srv.url}/hlsav/master.m3u8`, kind: 'hls', filename: 'AV test', maxConnections: 4 });
+  const done = await waitTask(id, (t) => t.status === 'completed', 60000);
+  const { hash, item } = await savedFileHash(done.downloadId);
+  if (hash !== srv.mseSha256) throw new Error('joined file differs from the expected join');
+  if (done.filename !== 'AV test.mp4' || item.mime !== 'video/mp4') throw new Error(`saved as ${done.filename} (${item.mime})`);
+  if (srv.log.some((l) => l.path.endsWith('other.m3u8'))) throw new Error('fetched the non-default audio');
+  return `saved ${done.filename} (${done.size} bytes), ${done.hls.total} pieces, identical to the expected join`;
+});
+
+await check('m3u8 with separate audio: pausing during the audio resumes without refetching the video', async () => {
+  await engine('set-limit', { maxActive: 3, speedLimit: 6 * 1024 });
+  const mark = srv.log.length;
+  const { id } = await engine('add', { url: `${srv.url}/hlsav/master.m3u8`, kind: 'hls', filename: 'AV resume', maxConnections: 1 });
+  const video = (await waitTask(id, (t) => t.hls?.total > 0)).hls.total;
+  // The video track has 4 pieces: wait until the audio has started.
+  await waitTask(id, (t) => t.hls?.done >= 5, 60000);
+  await engine('pause', { id });
+  await waitTask(id, (t) => t.status === 'paused');
+  const before = srv.log.slice(mark).filter((l) => l.path === '/mse/video.mp4').length;
+  await engine('set-limit', { maxActive: 3, speedLimit: 0 });
+  await engine('resume', { id });
+  const done = await waitTask(id, (t) => t.status === 'completed', 60000);
+  const { hash } = await savedFileHash(done.downloadId);
+  if (hash !== srv.mseSha256) throw new Error('joined file differs after resume');
+  const after = srv.log.slice(mark).filter((l) => l.path === '/mse/video.mp4').length;
+  if (after !== before) throw new Error(`video fetched again after resume (${before} -> ${after})`);
+  return `${video} pieces in all, paused in the audio track, video not fetched again`;
+});
+
+await check('m3u8 with separate audio (MPEG-TS): the audio is saved next to the video', async () => {
+  const before = (await engine('list')).tasks.map((t) => t.id);
+  const { id } = await engine('add', { url: `${srv.url}/hlsts/master.m3u8`, kind: 'hls', filename: 'TS test', maxConnections: 4 });
+  const done = await waitTask(id, (t) => t.status === 'completed', 60000);
+  const { hash } = await savedFileHash(done.downloadId);
+  if (hash !== srv.hlsSha256 || done.filename !== 'TS test.ts') throw new Error(`video ${done.filename} differs`);
+  let extra;
+  for (let i = 0; i < 40 && !extra; i++) {
+    extra = (await engine('list')).tasks.find((t) => !before.includes(t.id) && t.id !== id && t.status === 'completed');
+    if (!extra) await sleep(250);
+  }
+  if (!extra || extra.filename !== 'TS test-audio.aac') throw new Error(`audio ${JSON.stringify(extra && extra.filename)}`);
+  const audio = await savedFileHash(extra.downloadId);
+  if (audio.hash !== srv.hlsAudioSha256) throw new Error('audio file differs');
+  return `saved ${done.filename} and ${extra.filename}`;
+});
+
 await check('small files are left to the browser', async () => {
   await setSettings({ autoTakeover: true, minSizeMB: SIZE_MB + 1, maxConnections: 6 });
   const before = (await engine('list')).tasks.map((t) => t.id);

@@ -60,7 +60,9 @@ export function parsePlaylist(text, baseUrl) {
         });
       } else if (l.startsWith('#EXT-X-MEDIA:')) {
         const a = attrs(l.slice(13));
-        if (a.TYPE === 'AUDIO' && a.URI) audio.push({ group: a['GROUP-ID'], name: a.NAME, url: resolve(a.URI, baseUrl) });
+        if (a.TYPE === 'AUDIO' && a.URI) {
+          audio.push({ group: a['GROUP-ID'], name: a.NAME, default: a.DEFAULT === 'YES', url: resolve(a.URI, baseUrl) });
+        }
       }
     }
     // Best first.
@@ -110,6 +112,13 @@ export function parsePlaylist(text, baseUrl) {
     drm: segments.some((s) => s.key && s.key.method !== 'AES-128'),
     fmp4: segments.some((s) => s.map),
   };
+}
+
+// The separate audio a variant plays with (its AUDIO group): the default
+// rendition, else the first. null when the audio is inside the video pieces.
+export function audioFor(master, variant) {
+  const group = master.audio.filter((a) => a.group === variant?.audio);
+  return group.find((a) => a.default) || group[0] || null;
 }
 
 // AES-128 IV: the IV attribute, else the segment's media sequence number.

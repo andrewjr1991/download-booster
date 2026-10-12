@@ -248,9 +248,6 @@
   "aes128": {
     "message": "AES-128 encrypted (handled)"
   },
-  "videoOnly": {
-    "message": "video only: audio is a separate stream"
-  },
   "loading": {
     "message": "Loading…"
   },
@@ -334,5 +331,8 @@
   },
   "ruleImagePlaceholder": {
     "message": "e.g. jfif"
+  },
+  "separateAudio": {
+    "message": "+ audio $1 (downloaded and joined in)"
   }
 }
