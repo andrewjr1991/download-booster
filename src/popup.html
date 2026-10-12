@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="ui.css" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header class="top">
+      <img src="../icons/icon32.png" alt="" width="22" height="22" />
+      <span class="brand" data-i18n="extShortName"></span>
+      <span id="total" class="hint"></span>
+      <button id="open-manager" class="icon" data-i18n-title="openManager"></button>
+    </header>
+
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-view="media" aria-selected="true"><span data-i18n="popupMedia"></span> <b class="count" id="media-count"></b></button>
+      <button role="tab" data-view="tasks" aria-selected="false"><span data-i18n="popupTasks"></span> <b class="count" id="tasks-count"></b></button>
+    </nav>
+
+    <section id="view-media" class="view">
+      <div id="kinds" class="chips"></div>
+      <ul id="media-list" class="list"></ul>
+      <div id="media-empty" class="empty" hidden>
+        <p data-i18n="mediaEmpty"></p>
+      </div>
+      <div class="bulk" id="media-bulk">
+        <label><input type="checkbox" id="media-all" /> <span data-i18n="selectAll"></span></label>
+        <button id="media-go" class="primary" disabled></button>
+      </div>
+    </section>
+
+    <section id="view-tasks" class="view" hidden>
+      <ul id="task-list" class="list"></ul>
+      <div id="tasks-empty" class="empty" hidden><p data-i18n="tasksEmpty"></p></div>
+    </section>
+
+    <footer class="foot">
+      <button id="sniff-links" class="ghost"></button>
+      <span id="toast" class="hint" role="status"></span>
+    </footer>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

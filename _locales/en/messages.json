@@ -190,5 +190,35 @@
   },
   "limitedTo": {
     "message": "limited to $1"
+  },
+  "popupMedia": {
+    "message": "On this page"
+  },
+  "popupTasks": {
+    "message": "Downloads"
+  },
+  "openManager": {
+    "message": "Open download manager"
+  },
+  "sniffLinks": {
+    "message": "Find all links on this page"
+  },
+  "mediaEmpty": {
+    "message": "No video, audio or images found yet. Play the video or scroll the page, then open this again."
+  },
+  "tasksEmpty": {
+    "message": "No downloads yet."
+  },
+  "catStream": {
+    "message": "Streams"
+  },
+  "streamHint": {
+    "message": "m3u8/mpd playlist: its pieces can't be merged yet, copy the link instead"
+  },
+  "copyLink": {
+    "message": "Copy link"
+  },
+  "copied": {
+    "message": "Link copied"
   }
 }

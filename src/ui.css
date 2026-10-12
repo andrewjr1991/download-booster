@@ -1,0 +1,233 @@
+/* Shared look for the manager page and the toolbar popup. */
+:root {
+  --bg: #f4f6fa;
+  --card: #ffffff;
+  --raised: #f8fafc;
+  --text: #18202b;
+  --muted: #667085;
+  --border: #e3e7ee;
+  --accent: #2f6bff;
+  --accent-2: #6a5cff;
+  --accent-soft: #e6eeff;
+  --on-accent: #ffffff;
+  --track: #e9edf3;
+  --ok: #138a4a;
+  --ok-soft: #e3f6eb;
+  --warn: #b45309;
+  --warn-soft: #fdf1e1;
+  --err: #c4231c;
+  --err-soft: #fde8e7;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 2px 8px rgba(16, 24, 40, 0.05);
+  --shadow-hover: 0 2px 4px rgba(16, 24, 40, 0.06), 0 8px 24px rgba(16, 24, 40, 0.08);
+  --radius: 12px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111318;
+    --card: #1a1d24;
+    --raised: #20242c;
+    --text: #e8eaee;
+    --muted: #9aa3b2;
+    --border: #2c313b;
+    --accent: #6f9bff;
+    --accent-2: #9a8cff;
+    --accent-soft: #1f2d4f;
+    --on-accent: #0d1220;
+    --track: #2a2f39;
+    --ok: #4ade80;
+    --ok-soft: #173325;
+    --warn: #fbbf24;
+    --warn-soft: #3a2c10;
+    --err: #f87171;
+    --err-soft: #3d1a1a;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.4);
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+button.primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border-color: transparent;
+  color: var(--on-accent);
+  font-weight: 600;
+}
+button.primary:hover:not(:disabled) {
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 35%, transparent);
+  border-color: transparent;
+}
+button.ghost {
+  background: transparent;
+}
+button.icon {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+button.icon:hover:not(:disabled) {
+  background: var(--raised);
+  color: var(--text);
+  border-color: var(--border);
+}
+button.icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+input[type='url'],
+input[type='number'],
+input[type='search'],
+textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+input:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+.chips button {
+  font-size: 12.5px;
+  padding: 2px 10px;
+  border-radius: 999px;
+}
+.chips button[aria-pressed='true'] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 12.5px;
+  margin: 4px 0;
+}
+
+/* status pill */
+.status {
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--muted);
+}
+.status[data-s='downloading'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.status[data-s='completed'] {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+.status[data-s='error'] {
+  background: var(--err-soft);
+  color: var(--err);
+}
+.status[data-s='paused'] {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+/* file-type badge in front of a name */
+.ftype {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.ftype svg {
+  width: 18px;
+  height: 18px;
+}
+.ftype[data-kind='video'] {
+  background: #fde8f0;
+  color: #d0306b;
+}
+.ftype[data-kind='audio'] {
+  background: #efe8fd;
+  color: #7b4ce0;
+}
+.ftype[data-kind='image'] {
+  background: #e3f6eb;
+  color: #138a4a;
+}
+.ftype[data-kind='archive'],
+.ftype[data-kind='disk'] {
+  background: #fdf1e1;
+  color: #b45309;
+}
+.ftype[data-kind='stream'] {
+  background: #e2f4f8;
+  color: #0e7490;
+}
+@media (prefers-color-scheme: dark) {
+  .ftype[data-kind] {
+    background: var(--raised);
+  }
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 10px;
+  border: 2px solid var(--bg);
+}
