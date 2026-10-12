@@ -43,9 +43,9 @@ async function engine(cmd, args = {}) {
   throw new Error('Download engine did not respond');
 }
 
-async function addDownload({ url, filename, takeover, source }) {
+async function addDownload({ url, filename, takeover, source, referrer }) {
   const s = await getSettings();
-  return engine('add', { url, filename, takeover, source, maxConnections: s.maxConnections });
+  return engine('add', { url, filename, takeover, source, referrer, maxConnections: s.maxConnections });
 }
 
 // ---- entry points ----------------------------------------------------------
@@ -66,7 +66,7 @@ chrome.runtime.onStartup.addListener(() => {
 chrome.contextMenus.onClicked.addListener(async (info) => {
   const url = info.linkUrl || info.srcUrl;
   if (!url || !/^https?:/i.test(url)) return;
-  await addDownload({ url, source: 'menu' });
+  await addDownload({ url, source: 'menu', referrer: info.frameUrl || info.pageUrl });
   openManager();
 });
 
@@ -104,6 +104,7 @@ chrome.downloads.onCreated.addListener(async (item) => {
       filename: item.filename ? item.filename.split(/[\\/]/).pop() : null,
       takeover: { minSize },
       source: 'takeover',
+      referrer: item.referrer,
     });
   } catch (err) {
     res = { accepted: false, reason: String(err) };
@@ -128,6 +129,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     // Manager page -> engine, routed here so the offscreen document exists.
     const { type, cmd, ...args } = msg;
     engine(cmd, args).then(sendResponse, (err) => sendResponse({ error: String(err?.message || err) }));
+    return true;
+  }
+  if (msg?.type === 'request-headers') {
+    setRequestHeaders(msg).then(sendResponse, (err) => sendResponse({ error: String(err?.message || err) }));
+    return true;
+  }
+  if (msg?.type === 'clear-request-headers') {
+    clearRequestHeaders(msg.id).then(sendResponse, () => sendResponse({}));
     return true;
   }
   if (msg?.type === 'engine-state') updateBadge(msg.tasks);
@@ -159,6 +168,60 @@ chrome.downloads.onChanged.addListener(async (delta) => {
     await engine('save-failed', { id: taskId, error: item?.error || 'interrupted' });
   }
 });
+
+// ---- Referer for anti-hotlinking -------------------------------------------------
+// fetch() cannot set Referer, so each task gets session rules that add the
+// page's address to this extension's own requests for the task's URLs.
+
+const RULE_IDS_KEY = 'refererRuleIds'; // task id -> [rule ids]
+
+function urlFilterFor(url) {
+  // urlFilter treats * ^ | as wildcards/anchors; skip URLs that contain them.
+  const clean = url.split('#')[0];
+  return /[*^|]/.test(clean) ? null : `|${clean}|`;
+}
+
+async function setRequestHeaders({ id, urls, referrer }) {
+  if (!referrer || !/^https?:/i.test(referrer)) return { ok: true };
+  const { [RULE_IDS_KEY]: map = {} } = await chrome.storage.session.get(RULE_IDS_KEY);
+  const used = new Set(Object.values(map).flat());
+  const old = map[id] || [];
+  const addRules = [];
+  let next = 1;
+  for (const url of [...new Set(urls.filter(Boolean))]) {
+    const urlFilter = urlFilterFor(url);
+    if (!urlFilter) continue;
+    while (used.has(next)) next++;
+    used.add(next);
+    addRules.push({
+      id: next,
+      priority: 1,
+      action: {
+        type: 'modifyHeaders',
+        requestHeaders: [{ header: 'referer', operation: 'set', value: referrer }],
+      },
+      condition: {
+        urlFilter,
+        initiatorDomains: [chrome.runtime.id],
+        tabIds: [chrome.tabs.TAB_ID_NONE],
+        resourceTypes: ['xmlhttprequest', 'other'],
+      },
+    });
+  }
+  await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: old, addRules });
+  map[id] = addRules.map((r) => r.id);
+  await chrome.storage.session.set({ [RULE_IDS_KEY]: map });
+  return { ok: true };
+}
+
+async function clearRequestHeaders(id) {
+  const { [RULE_IDS_KEY]: map = {} } = await chrome.storage.session.get(RULE_IDS_KEY);
+  if (!map[id]) return {};
+  await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: map[id] });
+  delete map[id];
+  await chrome.storage.session.set({ [RULE_IDS_KEY]: map });
+  return {};
+}
 
 function updateBadge(tasks) {
   const active = tasks.filter((t) => t.status === 'downloading' || t.status === 'saving').length;
