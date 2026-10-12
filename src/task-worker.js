@@ -102,7 +102,13 @@ class OpfsFile {
     this.h = h;
   }
   write(data, at) {
-    this.h.write(data, { at });
+    // A short write would leave a hole that is counted as downloaded.
+    let done = 0;
+    while (done < data.byteLength) {
+      const n = this.h.write(data.subarray(done), { at: at + done });
+      if (!(n > 0)) throw new Error(`wrote ${done} of ${data.byteLength} bytes`);
+      done += n;
+    }
   }
   truncate(size) {
     this.h.truncate(size);
