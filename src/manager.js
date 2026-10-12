@@ -1,3 +1,5 @@
+import { CATEGORY_ORDER, parsePastedUrls } from './sniff.js';
+
 const t = (key, subs) => chrome.i18n.getMessage(key, subs) || key;
 const DEFAULT_SETTINGS = { autoTakeover: true, minSizeMB: 20, maxConnections: 6, maxActive: 3 };
 
@@ -212,21 +214,192 @@ chrome.runtime.onMessage.addListener((msg) => {
   return false;
 });
 
-$('#add').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const url = $('#url').value.trim();
-  const msg = $('#add-msg');
-  if (!/^https?:\/\//i.test(url)) {
-    msg.textContent = t('invalidUrl');
-    msg.hidden = false;
-    return;
-  }
-  msg.hidden = true;
+async function addUrls(urls, extra = {}) {
   const { settings } = await chrome.storage.local.get('settings');
   const s = { ...DEFAULT_SETTINGS, ...settings };
-  await engine('add', { url, source: 'manual', maxConnections: s.maxConnections, maxActive: s.maxActive });
-  $('#url').value = '';
+  for (const url of urls) {
+    await engine('add', { url, source: 'manual', maxConnections: s.maxConnections, maxActive: s.maxActive, ...extra });
+  }
   refresh();
+}
+
+function note(text) {
+  const msg = $('#add-msg');
+  msg.textContent = text || '';
+  msg.hidden = !text;
+}
+
+// One link per line (or separated by spaces); every http(s) URL is added.
+$('#add').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const urls = parsePastedUrls($('#url').value);
+  if (!urls.length) return note(t('invalidUrl'));
+  await addUrls(urls);
+  $('#url').value = '';
+  fitUrlBox();
+  note(urls.length > 1 ? t('addedCount', [String(urls.length)]) : '');
+});
+
+// Enter adds, Shift+Enter starts a new line; the box grows with its content.
+$('#url').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    $('#add').requestSubmit();
+  }
+});
+function fitUrlBox() {
+  const box = $('#url');
+  box.rows = Math.min(8, Math.max(1, box.value.split('\n').length));
+}
+$('#url').addEventListener('input', fitUrlBox);
+
+// ---- links sniffed from a page ------------------------------------------------------
+
+const CATEGORY_KEYS = {
+  video: 'catVideo',
+  audio: 'catAudio',
+  archive: 'catArchive',
+  program: 'catProgram',
+  disk: 'catDisk',
+  document: 'catDocument',
+  image: 'catImage',
+  other: 'catOther',
+};
+// Pictures and plain web pages are on almost every page; they start hidden.
+const HIDDEN_BY_DEFAULT = new Set(['image', 'other']);
+const sniff = { pageUrl: null, links: [], cats: new Set(), checked: new Set() };
+
+async function openSniff() {
+  const { sniff: data } = await chrome.storage.session.get('sniff');
+  if (!data) return;
+  sniff.pageUrl = data.pageUrl;
+  sniff.links = data.links || [];
+  const present = new Set(sniff.links.map((l) => l.category));
+  sniff.cats = new Set([...present].filter((c) => !HIDDEN_BY_DEFAULT.has(c)));
+  if (!sniff.cats.size) sniff.cats = present;
+  sniff.checked = new Set(sniff.links.filter((l) => !HIDDEN_BY_DEFAULT.has(l.category)).map((l) => l.url));
+  let host = data.pageUrl;
+  try {
+    host = new URL(data.pageUrl).host;
+  } catch {}
+  $('#sniff-source').textContent = t('sniffFrom', [data.title || host, String(sniff.links.length)]);
+  $('#sniff-source').title = data.pageUrl || '';
+  $('#sniff-search').value = '';
+  renderFilters();
+  renderSniff();
+  $('#sniff').hidden = false;
+}
+
+function closeSniff() {
+  $('#sniff').hidden = true;
+  chrome.storage.session.remove('sniff');
+  history.replaceState(null, '', location.pathname + (DEBUG ? '?debug' : ''));
+}
+
+function renderFilters() {
+  const counts = {};
+  for (const l of sniff.links) counts[l.category] = (counts[l.category] || 0) + 1;
+  $('#sniff-filters').replaceChildren(
+    ...CATEGORY_ORDER.filter((c) => counts[c]).map((c) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.cat = c;
+      b.textContent = `${t(CATEGORY_KEYS[c])} ${counts[c]}`;
+      b.setAttribute('aria-pressed', String(sniff.cats.has(c)));
+      b.onclick = () => {
+        if (sniff.cats.has(c)) sniff.cats.delete(c);
+        else sniff.cats.add(c);
+        b.setAttribute('aria-pressed', String(sniff.cats.has(c)));
+        renderSniff();
+      };
+      return b;
+    }),
+  );
+}
+
+function visibleLinks() {
+  const q = $('#sniff-search').value.trim().toLowerCase();
+  return sniff.links.filter(
+    (l) => sniff.cats.has(l.category) && (!q || l.url.toLowerCase().includes(q) || l.text.toLowerCase().includes(q)),
+  );
+}
+
+function linkName(l) {
+  try {
+    const last = decodeURIComponent(new URL(l.url).pathname.split('/').pop() || '');
+    if (last && l.category !== 'other') return last;
+  } catch {}
+  return l.text || l.url;
+}
+
+function readableUrl(u) {
+  try {
+    return decodeURI(u);
+  } catch {
+    return u;
+  }
+}
+
+function renderSniff() {
+  const shown = visibleLinks();
+  $('#sniff-list').replaceChildren(
+    ...shown.map((l) => {
+      const li = document.createElement('li');
+      const label = document.createElement('label');
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = sniff.checked.has(l.url);
+      box.onchange = () => {
+        if (box.checked) sniff.checked.add(l.url);
+        else sniff.checked.delete(l.url);
+        updateSniffCount();
+      };
+      const name = document.createElement('span');
+      name.className = 'lname';
+      name.textContent = linkName(l);
+      name.title = l.text || '';
+      const url = document.createElement('span');
+      url.className = 'lurl';
+      url.textContent = readableUrl(l.url).replace(/^https?:\/\//, '');
+      url.title = l.url;
+      label.append(box, name, url);
+      li.append(label);
+      return li;
+    }),
+  );
+  $('#sniff-empty').hidden = shown.length > 0;
+  updateSniffCount();
+}
+
+function selectedLinks() {
+  return visibleLinks().filter((l) => sniff.checked.has(l.url));
+}
+
+function updateSniffCount() {
+  const shown = visibleLinks();
+  const n = selectedLinks().length;
+  $('#sniff-go').textContent = t('downloadSelected', [String(n)]);
+  $('#sniff-go').disabled = n === 0;
+  $('#sniff-all').checked = shown.length > 0 && n === shown.length;
+  $('#sniff-all').indeterminate = n > 0 && n < shown.length;
+}
+
+$('#sniff-all').addEventListener('change', (e) => {
+  for (const l of visibleLinks()) {
+    if (e.target.checked) sniff.checked.add(l.url);
+    else sniff.checked.delete(l.url);
+  }
+  renderSniff();
+});
+$('#sniff-search').addEventListener('input', renderSniff);
+$('#sniff-close').addEventListener('click', closeSniff);
+$('#sniff-go').addEventListener('click', async () => {
+  const urls = selectedLinks().map((l) => l.url);
+  if (!urls.length) return;
+  // Sent with the page as Referer, as a click on the page would.
+  await addUrls(urls, { source: 'sniff', referrer: sniff.pageUrl });
+  closeSniff();
+  note(t('addedCount', [String(urls.length)]));
 });
 
 $('#clear').addEventListener('click', async () => {
@@ -263,3 +436,4 @@ loadSettings().then(async () => {
   await engine('set-limit', { maxActive: Number($('#maxActive').value) });
   refresh();
 });
+if (new URLSearchParams(location.search).has('sniff')) openSniff();

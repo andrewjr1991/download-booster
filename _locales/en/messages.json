@@ -18,7 +18,7 @@
     "message": "Downloads"
   },
   "addPlaceholder": {
-    "message": "Paste a download link (http or https)"
+    "message": "Paste one or more download links (http or https), one per line"
   },
   "addButton": {
     "message": "Download"
@@ -127,5 +127,56 @@
   },
   "measured": {
     "message": "measured $1"
+  },
+  "menuSniffPage": {
+    "message": "Find downloadable links on this page"
+  },
+  "sniffTitle": {
+    "message": "Links on this page"
+  },
+  "close": {
+    "message": "Close"
+  },
+  "selectAll": {
+    "message": "Select all shown"
+  },
+  "filterPlaceholder": {
+    "message": "Filter by name or address"
+  },
+  "sniffEmpty": {
+    "message": "No links match."
+  },
+  "downloadSelected": {
+    "message": "Download selected ($1)"
+  },
+  "sniffFrom": {
+    "message": "From $1 · $2 links"
+  },
+  "catVideo": {
+    "message": "Video"
+  },
+  "catAudio": {
+    "message": "Audio"
+  },
+  "catArchive": {
+    "message": "Archives"
+  },
+  "catProgram": {
+    "message": "Programs"
+  },
+  "catDisk": {
+    "message": "Disk images"
+  },
+  "catDocument": {
+    "message": "Documents"
+  },
+  "catImage": {
+    "message": "Images"
+  },
+  "catOther": {
+    "message": "Other / pages"
+  },
+  "addedCount": {
+    "message": "Added $1 downloads"
   }
 }

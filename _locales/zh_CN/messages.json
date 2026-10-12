@@ -18,7 +18,7 @@
     "message": "下载管理"
   },
   "addPlaceholder": {
-    "message": "粘贴下载链接（http 或 https）"
+    "message": "粘贴一个或多个下载链接（http 或 https），每行一个"
   },
   "addButton": {
     "message": "下载"
@@ -127,5 +127,56 @@
   },
   "measured": {
     "message": "实测 $1"
+  },
+  "menuSniffPage": {
+    "message": "嗅探本页的下载链接"
+  },
+  "sniffTitle": {
+    "message": "本页链接"
+  },
+  "close": {
+    "message": "关闭"
+  },
+  "selectAll": {
+    "message": "全选当前显示"
+  },
+  "filterPlaceholder": {
+    "message": "按名称或地址筛选"
+  },
+  "sniffEmpty": {
+    "message": "没有符合条件的链接。"
+  },
+  "downloadSelected": {
+    "message": "下载选中的 $1 个"
+  },
+  "sniffFrom": {
+    "message": "来自 $1 · 共 $2 个链接"
+  },
+  "catVideo": {
+    "message": "视频"
+  },
+  "catAudio": {
+    "message": "音频"
+  },
+  "catArchive": {
+    "message": "压缩包"
+  },
+  "catProgram": {
+    "message": "程序"
+  },
+  "catDisk": {
+    "message": "镜像"
+  },
+  "catDocument": {
+    "message": "文档"
+  },
+  "catImage": {
+    "message": "图片"
+  },
+  "catOther": {
+    "message": "其他 / 网页"
+  },
+  "addedCount": {
+    "message": "已添加 $1 个下载"
   }
 }

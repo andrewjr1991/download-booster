@@ -256,6 +256,61 @@ await check('Referer passed when adding by hand', async () => {
   return 'ok';
 });
 
+await check('pasting several links adds one task per link', async () => {
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 1 });
+  const before = (await engine('list')).tasks.map((t) => t.id);
+  const urls = [`${srv.url}/file.bin?paste=1`, `${srv.url}/file.bin?paste=2`];
+  await page.fill('#url', `${urls[0]}\n  not-a-link\n${urls[1]}\n${urls[0]}`);
+  await page.press('#url', 'Enter');
+  let added = [];
+  for (let i = 0; i < 20 && added.length < 2; i++) {
+    await sleep(250);
+    added = (await engine('list')).tasks.filter((t) => !before.includes(t.id));
+  }
+  const got = added.map((t) => t.url).sort();
+  if (JSON.stringify(got) !== JSON.stringify(urls)) throw new Error(`added ${JSON.stringify(got)}`);
+  const note = await page.textContent('#add-msg');
+  for (const t of added) await engine('remove', { id: t.id });
+  return `2 tasks, note "${note}"`;
+});
+
+await check('sniffing a page lists its files and downloads the picked ones with its Referer', async () => {
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6 });
+  const before = (await engine('list')).tasks.map((t) => t.id);
+  const mark = srv.log.length;
+  const p = await ctx.newPage();
+  await p.goto(`${srv.url}/page`);
+  await sw.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    await sniffPage(tab);
+  }, `${srv.url}/page`);
+  await page.waitForURL(/sniff=1/);
+  await page.waitForSelector('#sniff:not([hidden]) #sniff-list li');
+  const chips = await page.$$eval('#sniff-filters button', (bs) => bs.map((b) => `${b.dataset.cat}:${b.getAttribute('aria-pressed')}`));
+  const want = ['video:true', 'disk:true', 'image:false', 'other:false'];
+  if (JSON.stringify(chips) !== JSON.stringify(want)) throw new Error(`chips ${JSON.stringify(chips)}`);
+  await page.click('#sniff-filters button[data-cat="video"]'); // hide the video
+  const rows = await page.$$eval('#sniff-list li', (lis) => lis.map((li) => li.textContent));
+  if (rows.length !== 1 || !rows[0].includes('hotlink.bin')) throw new Error(`rows ${JSON.stringify(rows)}`);
+  await page.click('#sniff-go');
+  let task;
+  for (let i = 0; i < 20 && !task; i++) {
+    await sleep(250);
+    task = (await engine('list')).tasks.find((t) => !before.includes(t.id));
+  }
+  if (!task) throw new Error('nothing was added');
+  const done = await waitTask(task.id, (t) => t.status === 'completed');
+  const { hash } = await savedFileHash(done.downloadId);
+  if (hash !== srv.sha256) throw new Error('hash mismatch');
+  const added = (await engine('list')).tasks.filter((t) => !before.includes(t.id)).length;
+  if (added !== 1) throw new Error(`${added} tasks added`);
+  const ours = srv.log.slice(mark).filter((l) => l.path === '/hotlink.bin' && l.range);
+  if (ours.some((l) => !l.referer)) throw new Error('a request had no Referer');
+  if (!(await page.isHidden('#sniff'))) throw new Error('panel still open');
+  await p.close();
+  return `chips ${chips.join(' ')}, 1 file picked, ${ours.length} requests with Referer`;
+});
+
 await check('small files are left to the browser', async () => {
   await setSettings({ autoTakeover: true, minSizeMB: SIZE_MB + 1, maxConnections: 6 });
   const before = (await engine('list')).tasks.map((t) => t.id);

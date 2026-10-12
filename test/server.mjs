@@ -6,7 +6,7 @@
 //   /norange.bin    same bytes, ignores Range (always 200)
 //   /flaky.bin      Range-capable but every 4th request is answered 503
 //   /hotlink.bin    like /file.bin but 403 unless Referer is this server's /page
-//   /page           an HTML page linking to /hotlink.bin
+//   /page           an HTML page linking to /hotlink.bin (plus a few non-files)
 //   /cookie.bin     like /file.bin but 403 without the cookie session=1
 // Add ?ttfb=1500 to delay every response by that many ms (a far-away CDN).
 import http from 'node:http';
@@ -38,7 +38,10 @@ export function startServer({ port = 8787, sizeMB = 40, rateKBps = 2048 } = {}) 
     }
     if (path === '/page') {
       res.writeHead(200, { 'Content-Type': 'text/html' });
-      res.end('<a id="a" href="/hotlink.bin">download</a>');
+      res.end(
+        '<a id="a" href="/hotlink.bin">download</a> <a href="/hotlink.bin#again">again</a>' +
+          '<a href="/pic.png">picture</a> <a href="/about">about</a> <video src="/clip.mp4"></video>',
+      );
       return;
     }
     if (path === '/hotlink.bin' && !(req.headers.referer || '').startsWith(`http://127.0.0.1:${port}/page`)) {
