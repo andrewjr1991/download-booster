@@ -372,5 +372,61 @@
   },
   "errFolder": {
     "message": "cannot write to the download folder (allow access in Settings)"
+  },
+  "addMore": {
+    "message": "Checksum and mirrors"
+  },
+  "checksumLabel": {
+    "message": "Checksum"
+  },
+  "checksumPlaceholder": {
+    "message": "MD5, SHA-1 or SHA-256 (optional), checked when done"
+  },
+  "mirrorsLabel": {
+    "message": "Mirrors"
+  },
+  "mirrorsPlaceholder": {
+    "message": "Other addresses of the same file, one per line (optional); pieces are fetched from all of them"
+  },
+  "moreOneFile": {
+    "message": "A checksum and mirrors are for one link at a time."
+  },
+  "badChecksum": {
+    "message": "That is not an MD5, SHA-1 or SHA-256 checksum."
+  },
+  "checksumOk": {
+    "message": "$X$ verified ✓",
+    "placeholders": {
+      "x": {
+        "content": "$1"
+      }
+    }
+  },
+  "checksumPending": {
+    "message": "$X$ is checked when done",
+    "placeholders": {
+      "x": {
+        "content": "$1"
+      }
+    }
+  },
+  "mirrorUnusable": {
+    "message": "$X$ not usable",
+    "placeholders": {
+      "x": {
+        "content": "$1"
+      }
+    }
+  },
+  "statusVerifying": {
+    "message": "Verifying $X$",
+    "placeholders": {
+      "x": {
+        "content": "$1"
+      }
+    }
+  },
+  "errChecksum": {
+    "message": "the file does not match the checksum (retry downloads it again)"
   }
 }

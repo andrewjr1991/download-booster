@@ -802,6 +802,58 @@ await check('download folder: a joined m3u8 is saved into the folder too', async
   return `saved ${done.savedTo}, identical to the expected join`;
 });
 
+await check('checksum: a matching SHA-256 is verified after the download', async () => {
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6 });
+  await engine('set-limit', { maxActive: 3, speedLimit: 0 });
+  const { id } = await engine('add', { url: `${srv.url}/file.bin`, maxConnections: 6, checksum: { algo: 'sha256', hex: srv.sha256 } });
+  let sawVerifying = false;
+  const done = await waitTask(id, (t) => {
+    sawVerifying ||= !!t.verifying;
+    return t.status === 'completed';
+  });
+  if (!done.verified?.ok) throw new Error(`verified ${JSON.stringify(done.verified)}`);
+  const { hash } = await savedFileHash(done.downloadId);
+  if (hash !== srv.sha256) throw new Error('hash mismatch');
+  return `verified ${done.verified.algo}${sawVerifying ? ', progress shown while checking' : ''}`;
+});
+
+await check('checksum: a wrong MD5 stops the file from being saved', async () => {
+  const { id } = await engine('add', { url: `${srv.url}/file.bin`, maxConnections: 6, checksum: { algo: 'md5', hex: '0'.repeat(32) } });
+  const t0 = Date.now();
+  let task;
+  while (!(task = (await engine('list')).tasks.find((x) => x.id === id && x.status === 'error'))) {
+    if (Date.now() - t0 > 60000) throw new Error('no error');
+    await sleep(250);
+  }
+  if (task.error.code !== 'checksum' || task.downloadId != null || task.downloaded !== 0) throw new Error(JSON.stringify({ error: task.error, downloadId: task.downloadId, downloaded: task.downloaded }));
+  await engine('remove', { id });
+  return task.error.message;
+});
+
+await check('mirrors: pieces come from every address that has the same file, a bad one is dropped', async () => {
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 2 });
+  const mirror = srv.url.replace('127.0.0.1', 'localhost');
+  const { id } = await engine('add', {
+    url: `${srv.url}/file.bin`,
+    maxConnections: 2,
+    mirrors: [`${mirror}/file.bin`, `${srv.url}/photo.jpg`],
+    checksum: { algo: 'sha256', hex: srv.sha256 },
+  });
+  let peak = 0;
+  const done = await waitTask(id, (t) => {
+    peak = Math.max(peak, t.connections || 0);
+    return t.status === 'completed';
+  });
+  const { hash } = await savedFileHash(done.downloadId);
+  if (hash !== srv.sha256 || !done.verified?.ok) throw new Error('file differs');
+  const own = (done.mirrors || []).find((m) => m.primary);
+  const other = (done.mirrors || []).find((m) => m.host === new URL(mirror).host);
+  if (!own?.bytes || !other?.bytes) throw new Error(`bytes by host ${JSON.stringify(done.mirrors)}`);
+  if (!done.mirrors.some((m) => m.bad)) throw new Error('the bad mirror was not dropped');
+  if (peak <= 2) throw new Error(`peak ${peak} connections with 2 per server`);
+  return `${done.mirrors.map((m) => `${m.host}: ${m.bad ? 'dropped' : `${(m.bytes / 1048576).toFixed(1)} MB`}`).join(', ')}; peak ${peak} connections (2 per server)`;
+});
+
 await check('small files are left to the browser', async () => {
   await setSettings({ autoTakeover: true, minSizeMB: SIZE_MB + 1, maxConnections: 6 });
   const before = (await engine('list')).tasks.map((t) => t.id);

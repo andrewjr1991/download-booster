@@ -8,6 +8,8 @@ import { parsePlaylist, ivFor, variantLabel } from '../src/hls.js';
 import { Mp4Stream, mux, canJoin, children, parseMoov } from '../src/fmp4.js';
 import { parseMpd, parseManifest, parseSidx, isoDuration, fillTemplate } from '../src/dash.js';
 import { readFileSync } from 'node:fs';
+import { createHash as nodeHash, randomBytes } from 'node:crypto';
+import { createHash, parseChecksum } from '../src/hash.js';
 
 test('parseContentRange', () => {
   assert.deepEqual(parseContentRange('bytes 0-99/1000'), { start: 0, end: 100, total: 1000 });
@@ -461,4 +463,23 @@ test('DASH sidx: piece byte ranges', () => {
     { offset: start, length: 256, duration: 2 },
     { offset: start + 256, length: 512, duration: 2 },
   ]);
+});
+
+test('checksums: MD5, SHA-1 and SHA-256 fed in pieces match node:crypto', () => {
+  for (const algo of ['md5', 'sha1', 'sha256']) {
+    for (const n of [0, 3, 55, 56, 64, 65, 1000, 70001]) {
+      const data = randomBytes(n);
+      const h = createHash(algo);
+      for (let i = 0; i < n; i += 37) h.update(new Uint8Array(data.subarray(i, i + 37)));
+      assert.equal(h.digest(), nodeHash(algo).update(data).digest('hex'), `${algo} of ${n} bytes`);
+    }
+  }
+  const sha = 'E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855';
+  assert.deepEqual(parseChecksum(sha), { algo: 'sha256', hex: sha.toLowerCase() });
+  assert.deepEqual(parseChecksum(' sha256: ' + sha), { algo: 'sha256', hex: sha.toLowerCase() });
+  assert.equal(parseChecksum('md5:' + sha), null);
+  assert.equal(parseChecksum('d41d8cd98f00b204e9800998ecf8427e').algo, 'md5');
+  assert.equal(parseChecksum('da39a3ee5e6b4b0d3255bfef95601890afd80709').algo, 'sha1');
+  assert.equal(parseChecksum('not a hash'), null);
+  assert.equal(parseChecksum('abc'), null);
 });

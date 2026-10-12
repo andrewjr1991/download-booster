@@ -17,6 +17,7 @@ import {
 } from './scheduler.js';
 import { parseContentRange, pickFilename, isThrottleStatus, applyRename } from './http.js';
 import { uniqueName, finalize } from './folder.js';
+import { createHash, ALGO_NAMES } from './hash.js';
 
 const TICK_MS = 500;
 const CHECKPOINT_MS = 2000;
@@ -35,6 +36,12 @@ let protocol = null;
 
 let task;
 let handle; // where the bytes go: OpfsFile or FolderFile
+// Where the bytes come from: the file's own address, plus mirrors (other
+// addresses of the same file) once they have shown the same size. Each
+// connection picks the one with the fewest connections, so a mirror on
+// another server adds its bandwidth and its own connection limit.
+let sources = [];
+const primary = () => sources[0];
 let controller;
 const meter = new SpeedMeter(2000);
 const limiter = new RateLimiter(0); // this task's share of the global speed limit
@@ -172,6 +179,7 @@ async function detectProtocol() {
 
 async function start(t) {
   task = t;
+  sources = [{ url: t.url, primary: true, conns: 0, bytes: 0, failures: 0, bad: false }];
   limiter.setRate(task.rate || 0);
   controller = new AdaptiveController({ max: task.rangeSupported === false ? 1 : task.maxConnections || 6 });
   peakSpeed = task.stats?.peakSpeed || 0;
@@ -179,6 +187,7 @@ async function start(t) {
   await openFile();
 
   if (task.segments && task.rangeSupported) {
+    checkMirrors();
     segments = task.segments.map((s) => ({ ...s }));
     beginTicking();
     schedule();
@@ -261,7 +270,9 @@ async function probe() {
   handle.truncate(size || 0);
 
   Object.assign(task, meta);
+  primary().url = meta.finalUrl;
   if (!rangeSupported) controller.max = 1;
+  else checkMirrors();
   segments = [{ id: 0, start: 0, end: size ?? Infinity, pos: 0 }];
   post({ type: 'meta', meta, segments });
   beginTicking();
@@ -318,7 +329,52 @@ function tick() {
     segments: segments.map(({ id, start, end, pos }) => ({ id, start, end, pos })),
     controller: controller.snapshot(),
     stats: stats(),
+    mirrors: mirrorStats(),
   });
+}
+
+// A mirror is used only if it answers ranges and has the same size.
+async function checkMirrors() {
+  for (const url of task.mirrors || []) {
+    if (stopping || sources.some((x) => x.url === url)) continue;
+    const src = { url, primary: false, conns: 0, bytes: 0, failures: 0, bad: true };
+    sources.push(src);
+    try {
+      const ac = new AbortController();
+      const resp = await fetch(url, fetchInit({ Range: 'bytes=0-0' }, ac.signal));
+      const cr = resp.status === 206 ? parseContentRange(resp.headers.get('content-range')) : null;
+      ac.abort();
+      if (cr?.total && cr.total === task.size) {
+        Object.assign(src, { bad: false, url: resp.url || url, etag: resp.headers.get('etag'), lastModified: resp.headers.get('last-modified') });
+      } else src.why = cr ? 'size' : `HTTP ${resp.status}`;
+    } catch (err) {
+      src.why = 'network';
+    }
+  }
+  const good = sources.filter((x) => !x.bad).length;
+  if (good > 1 && controller) {
+    // Each server has its own connection limit.
+    controller.max = Math.min(16, (task.maxConnections || 6) * good);
+    controller.rethink(Date.now());
+  }
+}
+
+function pickSource() {
+  const good = sources.filter((x) => !x.bad);
+  return good.reduce((a, b) => (b.conns < a.conns ? b : a), good[0] || primary());
+}
+
+const mirrorStats = () =>
+  sources.length > 1
+    ? sources.map((x) => ({ host: hostOf(x.url), bytes: x.bytes, bad: x.bad, why: x.why || null, primary: x.primary }))
+    : null;
+
+function hostOf(url) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
 }
 
 function stats() {
@@ -354,16 +410,21 @@ function schedule() {
 
 class PoolError extends Error {}
 
-async function runConn(seg, resp = null, ac = new AbortController(), pool = choosePool()) {
-  const conn = { ac, seg, pool, startedAt: Date.now(), lastDataAt: 0 };
+async function runConn(seg, resp = null, ac = new AbortController(), pool = null) {
+  const src = resp ? primary() : pickSource();
+  // The cookie-less pool is only tried on the file's own address.
+  pool ??= src.primary ? choosePool() : 'include';
+  const conn = { ac, seg, pool, src, startedAt: Date.now(), lastDataAt: 0 };
   conns.set(seg.id, conn);
+  src.conns += 1;
   try {
     if (!resp) {
       const headers = { Range: `bytes=${seg.pos}-${seg.end - 1}` };
-      const validator = task.etag && !task.etag.startsWith('W/') ? task.etag : task.lastModified;
+      const tag = src.primary ? task.etag : src.etag;
+      const validator = tag && !tag.startsWith('W/') ? tag : src.primary ? task.lastModified : src.lastModified;
       if (validator) headers['If-Range'] = validator;
       try {
-        resp = await fetch(task.url, fetchInit(headers, ac.signal, pool));
+        resp = await fetch(src.url, fetchInit(headers, ac.signal, pool));
       } catch (err) {
         if (pool === 'omit' && omitPool === 'untested' && !ac.signal.aborted) throw new PoolError(err.message);
         throw err;
@@ -397,6 +458,7 @@ async function runConn(seg, resp = null, ac = new AbortController(), pool = choo
         if (writing) await writing.catch((err) => fail('folder', err));
         if (stopping) break;
         seg.pos += chunk.byteLength;
+        src.bytes += chunk.byteLength;
         failures = 0;
         const wait = limiter.take(chunk.byteLength, Date.now());
         if (wait > 0) await new Promise((r) => setTimeout(r, wait));
@@ -420,8 +482,21 @@ async function runConn(seg, resp = null, ac = new AbortController(), pool = choo
       omitPool = 'bad'; // retried right away from the cookie pool
       return;
     }
+    if (!src.primary) {
+      // A failing mirror is dropped; its piece goes back to the others.
+      src.failures += 1;
+      const permanent = err instanceof HttpError && err.status < 500 && err.status !== 429 && err.status !== 408;
+      if (err instanceof ChangedError || permanent || src.failures >= 3) {
+        src.bad = true;
+        src.why = String(err?.message || err);
+      }
+      retryAt.set(seg.id, Date.now() + 500);
+      setTimeout(schedule, 510);
+      return;
+    }
     onConnError(seg, err);
   } finally {
+    src.conns -= 1;
     if (conns.get(seg.id) === conn) conns.delete(seg.id);
     if (!stopping) schedule();
   }
@@ -465,10 +540,15 @@ async function finish() {
   finished = true;
   clearInterval(ticker);
   let savedAs = null;
+  let verified = null;
   try {
     if (task.size != null) handle.truncate(task.size);
     await handle.close();
     handle = null;
+    if (task.checksum) {
+      verified = await verify();
+      if (!verified.ok) return badChecksum(verified);
+    }
     if (task.folder) savedAs = await finalize(task.folder.dir, task.folder.part, task.filename || 'download');
   } catch (err) {
     finished = false;
@@ -478,8 +558,50 @@ async function finish() {
     type: 'done',
     size: task.size,
     savedAs,
+    verified,
+    mirrors: mirrorStats(),
     segments: segments.map(({ id, start, end, pos }) => ({ id, start, end, pos })),
     stats: stats(),
+  });
+}
+
+// ---- checksum ---------------------------------------------------------------
+
+// Read the finished file back and compare it with the checksum the user gave.
+async function verify() {
+  const { algo, hex } = task.checksum;
+  const dir = task.folder ? task.folder.dir : await (await navigator.storage.getDirectory()).getDirectoryHandle('downloads');
+  const file = await (await dir.getFileHandle(task.folder ? task.folder.part : task.opfsName)).getFile();
+  const hash = createHash(algo);
+  const reader = file.stream().getReader();
+  let read = 0;
+  let last = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    hash.update(value);
+    read += value.byteLength;
+    const now = Date.now();
+    if (now - last > 300) {
+      last = now;
+      post({ type: 'verifying', verified: read, size: file.size, segments: segments.map(({ id, start, end, pos }) => ({ id, start, end, pos })) });
+    }
+  }
+  const actual = hash.digest();
+  return { algo, ok: actual === hex, expected: hex, actual };
+}
+
+// The file is not what the checksum says: nothing of it can be trusted, so
+// a retry downloads it again from the start.
+function badChecksum(v) {
+  stopping = true;
+  post({
+    type: 'error',
+    code: 'checksum',
+    message: `${ALGO_NAMES[v.algo]} ${v.actual} ≠ ${v.expected}`,
+    reset: true,
+    verified: v,
+    segments: null,
   });
 }
 

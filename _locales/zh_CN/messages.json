@@ -372,5 +372,61 @@
   },
   "errFolder": {
     "message": "无法写入下载文件夹（请在设置里允许访问）"
+  },
+  "addMore": {
+    "message": "校验值和镜像地址"
+  },
+  "checksumLabel": {
+    "message": "校验值"
+  },
+  "checksumPlaceholder": {
+    "message": "MD5、SHA-1 或 SHA-256（可选），下完自动核对"
+  },
+  "mirrorsLabel": {
+    "message": "镜像地址"
+  },
+  "mirrorsPlaceholder": {
+    "message": "同一个文件的其他下载地址，每行一个（可选），分段会从所有地址一起下载"
+  },
+  "moreOneFile": {
+    "message": "校验值和镜像地址一次只能用于一个链接。"
+  },
+  "badChecksum": {
+    "message": "这不是 MD5、SHA-1 或 SHA-256 校验值。"
+  },
+  "checksumOk": {
+    "message": "$X$ 校验通过 ✓",
+    "placeholders": {
+      "x": {
+        "content": "$1"
+      }
+    }
+  },
+  "checksumPending": {
+    "message": "下完后核对 $X$",
+    "placeholders": {
+      "x": {
+        "content": "$1"
+      }
+    }
+  },
+  "mirrorUnusable": {
+    "message": "$X$ 不可用",
+    "placeholders": {
+      "x": {
+        "content": "$1"
+      }
+    }
+  },
+  "statusVerifying": {
+    "message": "正在校验 $X$",
+    "placeholders": {
+      "x": {
+        "content": "$1"
+      }
+    }
+  },
+  "errChecksum": {
+    "message": "文件和校验值不一致（重试会重新下载）"
   }
 }
