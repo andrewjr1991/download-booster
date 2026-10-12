@@ -70,6 +70,7 @@ async function handle(msg) {
       // A recording is already complete: only saving it can be retried.
       if (t?.kind === 'record' && t.status === 'error') await save(t);
       else if (t && (t.status === 'paused' || t.status === 'error')) {
+        t.saveRetries = 0;
         if (!t.rangeSupported) t.segments = null; // no ranges: start over
         enqueue(t);
       }
@@ -82,7 +83,15 @@ async function handle(msg) {
       if (t) await onSaved(t, msg.downloadId);
       return { ok: true };
     case 'save-failed':
-      if (t) setStatus(t, 'error', { code: 'save', message: msg.error });
+      if (!t) return { ok: true };
+      // Chrome stopped copying the file to Downloads part-way. The file is
+      // still complete in the browser's storage, so try again (twice) before
+      // reporting it, unless the user cancelled it or the disk is full.
+      if (!['USER_CANCELED', 'FILE_NO_SPACE'].includes(msg.error) && (t.saveRetries || 0) < 2) {
+        t.saveRetries = (t.saveRetries || 0) + 1;
+        console.warn(`saving ${t.filename} failed (${msg.error}), retrying`);
+        await save(t);
+      } else setStatus(t, 'error', { code: 'save', message: msg.error });
       return { ok: true };
     case 'clear-finished':
       for (const x of [...tasks.values()]) if (x.status === 'completed') await removeTask(x);
@@ -464,6 +473,7 @@ async function save(t) {
     }
     // OPFS files have no type, and Chrome then treats the blob as text/plain:
     // on Windows that renames "video.mp4" to "video.txt". Give it a real one.
+    if (blobUrls.has(t.id)) URL.revokeObjectURL(blobUrls.get(t.id));
     const url = URL.createObjectURL(file.slice(0, file.size, typeFor(t.filename)));
     blobUrls.set(t.id, url);
     const res = await chrome.runtime.sendMessage({
@@ -505,6 +515,7 @@ function clearRequestHeaders(t) {
 async function onSaved(t, downloadId) {
   if (blobUrls.has(t.id)) URL.revokeObjectURL(blobUrls.get(t.id));
   blobUrls.delete(t.id);
+  t.saveRetries = 0;
   t.downloadId = downloadId ?? t.downloadId;
   await deleteOpfs(t);
   clearRequestHeaders(t);

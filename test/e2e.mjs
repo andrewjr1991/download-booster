@@ -868,6 +868,46 @@ await check('mirrors: pieces come from every address that has the same file, a b
   return `${done.mirrors.map((m) => `${m.host}: ${m.bad ? 'dropped' : `${(m.bytes / 1048576).toFixed(1)} MB`}`).join(', ')}; peak ${peak} connections (2 per server)`;
 });
 
+await check('saving: Chrome failing to write the file is retried, then reported with the reason', async () => {
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6 });
+  await engine('set-limit', { maxActive: 3, speedLimit: 0 });
+  // Chrome can't write to the Downloads folder while it is a plain file.
+  const moved = `${downloadDir}-moved`;
+  fs.renameSync(downloadDir, moved);
+  fs.writeFileSync(downloadDir, 'not a folder');
+  let restored = false;
+  const restore = () => {
+    if (restored) return;
+    restored = true;
+    fs.rmSync(downloadDir, { force: true });
+    fs.renameSync(moved, downloadDir);
+  };
+  try {
+    const before = (await page.evaluate(() => chrome.downloads.search({}))).length;
+    const { id } = await engine('add', { url: `${srv.url}/file.bin?save=1`, maxConnections: 6 });
+    const failed = await waitTask(id, (t) => t.status === 'error' || t.status === 'completed', 120000).catch((e) => e);
+    restore();
+    const { tasks } = await engine('list');
+    const t = tasks.find((x) => x.id === id);
+    if (t.status !== 'error' || t.error?.code !== 'save') throw new Error(`ended ${t.status} ${JSON.stringify(t.error)} ${failed}`);
+    const tries = (await page.evaluate(() => chrome.downloads.search({}))).length - before;
+    if (tries !== 3) throw new Error(`${tries} save attempts, expected 3`);
+    const shown = await page.evaluate(async (t) => (await import('./client.js')).statusText(t), t);
+    if (!shown.includes(`(`)) throw new Error(`shown as "${shown}"`);
+    // Retrying once the folder is back saves the finished file without downloading it again.
+    const mark = srv.log.length;
+    await engine('resume', { id });
+    const done = await waitTask(id, (x) => x.status === 'completed');
+    const { hash } = await savedFileHash(done.downloadId);
+    if (hash !== srv.sha256) throw new Error('hash mismatch');
+    const refetched = srv.log.slice(mark).filter((l) => l.path === '/file.bin' && !/^bytes=0-0$/.test(l.range || '')).length;
+    if (refetched) throw new Error(`${refetched} requests after retrying the save`);
+    return `3 attempts, then "${shown || t.error.message}"; retry saved it without new requests`;
+  } finally {
+    restore();
+  }
+});
+
 await check('small files are left to the browser', async () => {
   await setSettings({ autoTakeover: true, minSizeMB: SIZE_MB + 1, maxConnections: 6 });
   const before = (await engine('list')).tasks.map((t) => t.id);
@@ -888,6 +928,8 @@ await check('small files are left to the browser', async () => {
 
 await page.screenshot({ path: path.join(EXT, 'test', 'manager-screenshot.png'), fullPage: true });
 await ctx.close();
+fs.rmSync(downloadDir, { recursive: true, force: true });
+fs.rmSync(userDir, { recursive: true, force: true });
 srv.server.close();
 h2.server.close();
 fs.writeFileSync(path.join(EXT, 'test', 'last-e2e.json'), JSON.stringify(results, null, 2));

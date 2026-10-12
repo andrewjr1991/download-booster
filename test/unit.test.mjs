@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { AdaptiveController, RateLimiter, splitLargest, remaining, MIN_SPLIT } from '../src/scheduler.js';
+import { AdaptiveController, RateLimiter, splitLargest, remaining, missingRanges, MIN_SPLIT } from '../src/scheduler.js';
 import { parseContentRange, filenameFromDisposition, sanitizeFilename, pickFilename, applyRename } from '../src/http.js';
 import { categorize, extensionOf, prepareLinks, parsePastedUrls, mergeMedia } from '../src/sniff.js';
 import { classify, sizeFrom, mediaKey, addMedia, compileRules } from '../src/media.js';
@@ -36,6 +36,17 @@ test('splitLargest halves the active segment with most bytes left', () => {
   // Only active segments are split.
   assert.equal(splitLargest(segs, new Set()), null);
   assert.equal(remaining(segs[0]) + remaining(s), 90 * MIN_SPLIT);
+});
+
+test('missing ranges: a file is only saved when its pieces cover every byte', () => {
+  const seg = (start, end, pos = end) => ({ start, end, pos });
+  assert.deepEqual(missingRanges([seg(0, 50), seg(50, 100)], 100), []);
+  // Pieces in any order, one overlapping another.
+  assert.deepEqual(missingRanges([seg(60, 100), seg(0, 70)], 100), []);
+  assert.deepEqual(missingRanges([seg(0, 40), seg(60, 100)], 100), [[40, 60]]);
+  assert.deepEqual(missingRanges([seg(0, 50, 30), seg(50, 100)], 100), [[30, 50]]);
+  assert.deepEqual(missingRanges([seg(10, 90)], 100), [[0, 10], [90, 100]]);
+  assert.deepEqual(missingRanges([], 5), [[0, 5]]);
 });
 
 test('starts at the maximum and stays there', () => {

@@ -39,6 +39,21 @@ export function splitLargest(segments, activeIds, minSplit = MIN_SPLIT, score = 
   return seg;
 }
 
+// The byte ranges [start, end) of a `size`-byte file that no segment has
+// downloaded yet. Empty when the pieces cover the whole file, which is what
+// a download must be before it is saved.
+export function missingRanges(segments, size) {
+  const gaps = [];
+  let at = 0;
+  for (const s of sortedSegments(segments)) {
+    if (s.start > at) gaps.push([at, Math.min(s.start, size)]);
+    at = Math.max(at, s.pos);
+    if (at >= size) break;
+  }
+  if (at < size) gaps.push([at, size]);
+  return gaps.filter(([a, b]) => b > a);
+}
+
 export function sortedSegments(segments) {
   return [...segments].sort((a, b) => a.start - b.start);
 }
