@@ -166,6 +166,21 @@ await check('flaky server (every 4th request 503) still completes', async () => 
   return `${mbps(srv.size, r.ms)}, peak ${r.maxConns} conns`;
 });
 
+await check('uneven connections: a crawling connection is replaced, the download keeps its speed', async () => {
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 4 });
+  const { id } = await engine('add', { url: `${srv.url}/uneven.bin`, maxConnections: 4 });
+  const t0 = Date.now();
+  const done = await waitTask(id, (t) => t.status === 'completed', 120000);
+  const ms = Date.now() - t0;
+  const { hash } = await savedFileHash(done.downloadId);
+  if (hash !== srv.sha256) throw new Error('hash mismatch');
+  // Before slow connections were replaced this took ~36 s: pieces sat on
+  // 64 KB/s connections until a free one split them.
+  if (ms > 25000) throw new Error(`took ${(ms / 1000).toFixed(0)} s, ${done.stats?.replaced} replaced`);
+  if (!done.stats?.replaced) throw new Error('no slow connection was replaced');
+  return `${mbps(srv.size, ms)} in ${(ms / 1000).toFixed(1)} s, ${done.stats.replaced} slow connection(s) replaced`;
+});
+
 await check('pause and resume uses If-Range and keeps bytes intact', async () => {
   await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6 });
   const { id } = await engine('add', { url: `${srv.url}/file.bin`, maxConnections: 6 });

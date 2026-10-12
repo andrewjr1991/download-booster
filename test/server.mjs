@@ -5,6 +5,8 @@
 //   /file.bin       Range-capable, ETag, throttled per request
 //   /norange.bin    same bytes, ignores Range (always 200)
 //   /flaky.bin      Range-capable but every 4th request is answered 503
+//   /uneven.bin     like /file.bin but every 3rd request crawls at 64 KB/s (a slow
+//                   server or route behind the same address)
 //   /hotlink.bin    like /file.bin but 403 unless Referer is this server's /page
 //   /page           an HTML page linking to /hotlink.bin (plus a few non-files)
 //   /cookie.bin     like /file.bin but 403 without the cookie session=1
@@ -166,6 +168,7 @@ export function startServer({ port = 8787, sizeMB = 40, rateKBps = 2048 } = {}) 
   const hlsAudioSha256 = crypto.createHash('sha256').update(hlsAudio).digest('hex');
   const bmp = bitmap(200, 150);
   let requests = 0;
+  let unevenCount = 0;
   const log = [];
 
   const server = http.createServer((req, res) => {
@@ -368,7 +371,7 @@ ms.addEventListener('sourceopen', async () => {
       res.end('#EXTM3U\n#EXTINF:4,\nseg1.ts\n');
       return;
     }
-    if (!['/file.bin', '/norange.bin', '/flaky.bin', '/hotlink.bin', '/cookie.bin', '/clip.mp4'].includes(path)) {
+    if (!['/file.bin', '/uneven.bin', '/norange.bin', '/flaky.bin', '/hotlink.bin', '/cookie.bin', '/clip.mp4'].includes(path)) {
       res.writeHead(404).end();
       return;
     }
@@ -404,7 +407,8 @@ ms.addEventListener('sourceopen', async () => {
 
     // Throttle: send rate/10 bytes every 100 ms.
     let pos = start;
-    const step = Math.max(1, Math.floor(rate / 10));
+    const slow = path === '/uneven.bin' && ++unevenCount % 3 === 2 && status === 206 && end - start > 1;
+    const step = Math.max(1, Math.floor((slow ? 64 * 1024 : rate) / 10));
     const timer = setInterval(() => {
       const n = Math.min(step, end - pos);
       if (n <= 0) {

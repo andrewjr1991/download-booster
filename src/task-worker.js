@@ -24,6 +24,17 @@ const CHECKPOINT_MS = 2000;
 const MAX_FAILURES = 8;
 const STALL_MS = 15000; // a connection silent this long is restarted
 const FRESH_MS = 3000; // a connection counts as streaming if data came this recently
+// One connection can be many times slower than another to the same server
+// (a different server behind the address, a congested route). A connection
+// far slower than the fastest one seen lately is dropped and its piece
+// requested again on a new connection.
+const CONN_WINDOW_MS = 2500; // per-connection speed is measured over this
+const SLOW_GRACE_MS = 3000; // a new connection gets this long to get going
+const SLOW_RATIO = 0.2; // slower than this share of the fastest one is "slow"
+const FAST_MEMORY_MS = 30000; // how long the fastest connection speed counts
+const MIN_FAST = 512 * 1024; // below this nothing is fast enough to compare with
+const TAIL_BYTES = 32 * 1024 * 1024; // near the end, split pieces finer
+const TAIL_SPLIT = 256 * 1024;
 
 // Chrome keeps separate connection pools for requests with and without
 // cookies. On HTTP/2 every request to a host shares one TCP connection, so
@@ -57,6 +68,8 @@ let lastCheckpoint = 0;
 let peakSpeed = 0;
 let activeMs = 0;
 let lastTick = 0;
+let fastest = { speed: 0, at: 0 }; // fastest single connection lately
+let replaced = 0; // slow connections dropped
 
 class HttpError extends Error {
   constructor(status) {
@@ -79,6 +92,7 @@ self.onmessage = (e) => {
 function setRate(rate) {
   const was = limiter.rate;
   limiter.setRate(rate);
+  if (controller) controller.limited = !!limiter.rate;
   // More room than before: look for a better connection count again.
   if (was && (!limiter.rate || limiter.rate > was * 1.2)) controller?.rethink(Date.now());
 }
@@ -182,6 +196,7 @@ async function start(t) {
   sources = [{ url: t.url, primary: true, conns: 0, bytes: 0, failures: 0, bad: false }];
   limiter.setRate(task.rate || 0);
   controller = new AdaptiveController({ max: task.rangeSupported === false ? 1 : task.maxConnections || 6 });
+  controller.limited = !!limiter.rate;
   peakSpeed = task.stats?.peakSpeed || 0;
   activeMs = task.stats?.activeMs || 0;
   await openFile();
@@ -308,6 +323,7 @@ function tick() {
       // Stalled: connected but silent (or never answered). Restart it.
       if (now - (c.lastDataAt || c.startedAt) > STALL_MS) c.ac.abort('stall');
     }
+    replaceSlow(now);
     controller.tick(now, done, streaming);
   }
   schedule();
@@ -378,7 +394,43 @@ function hostOf(url) {
 }
 
 function stats() {
-  return { peakSpeed, activeMs, singleSpeed: controller.singleSpeed, levels: controller.levels };
+  return { peakSpeed, activeMs, singleSpeed: controller.singleSpeed, levels: controller.levels, replaced };
+}
+
+// This connection's speed over the last CONN_WINDOW_MS (bytes/s), or null
+// while it is too new to tell.
+function connSpeed(c, now) {
+  const w = c.window;
+  if (!w || w.length < 2 || now - c.startedAt < SLOW_GRACE_MS) return null;
+  const [t0, b0] = w[0];
+  const [t1, b1] = w[w.length - 1];
+  const v = t1 > t0 ? ((b1 - b0) * 1000) / (t1 - t0) : null;
+  return Number.isFinite(v) ? v : null;
+}
+
+function replaceSlow(now) {
+  for (const c of conns.values()) {
+    (c.window ??= []).push([now, c.bytes || 0]);
+    while (c.window.length > 2 && now - c.window[1][0] >= CONN_WINDOW_MS) c.window.shift();
+    const v = connSpeed(c, now);
+    if (v != null && (v > fastest.speed || now - fastest.at > FAST_MEMORY_MS)) fastest = { speed: v, at: now };
+  }
+  // A speed limit slows every connection on purpose: nothing to compare.
+  if (limiter.rate || fastest.speed < MIN_FAST) return;
+  let worst = null;
+  for (const c of conns.values()) {
+    const v = connSpeed(c, now);
+    if (v == null || v >= fastest.speed * SLOW_RATIO) continue;
+    // Worth it only if the piece would take a while at this speed.
+    const left = remaining(c.seg);
+    if (left / Math.max(v, 1) < 3) continue;
+    if (!worst || v < worst.v) worst = { c, v };
+  }
+  // One at a time, so a server that is slow for everyone isn't hammered.
+  if (worst) {
+    replaced += 1;
+    worst.c.ac.abort('slow');
+  }
 }
 
 function schedule() {
@@ -396,7 +448,12 @@ function schedule() {
       runConn(pending);
       continue;
     }
-    const seg = splitLargest(segments, new Set(conns.keys()), MIN_SPLIT);
+    // Take over half of the piece that will take longest to finish; near the
+    // end of the file, pieces down to TAIL_SPLIT so no slow piece is left.
+    const now2 = Date.now();
+    const eta = (s) => remaining(s) / Math.max(conns.get(s.id) ? connSpeed(conns.get(s.id), now2) ?? fastest.speed : fastest.speed, 1);
+    const minSplit = totalRemaining(segments) < TAIL_BYTES ? TAIL_SPLIT : MIN_SPLIT;
+    const seg = splitLargest(segments, new Set(conns.keys()), minSplit, eta);
     if (!seg) break;
     runConn(seg);
   }
@@ -453,6 +510,7 @@ async function runConn(seg, resp = null, ac = new AbortController(), pool = null
       const room = seg.end - seg.pos;
       if (chunk.byteLength > room) chunk = chunk.subarray(0, room);
       conn.lastDataAt = Date.now();
+      conn.bytes = (conn.bytes || 0) + chunk.byteLength;
       if (chunk.byteLength) {
         const writing = handle.write(chunk, seg.pos);
         if (writing) await writing.catch((err) => fail('folder', err));
@@ -477,7 +535,8 @@ async function runConn(seg, resp = null, ac = new AbortController(), pool = null
     }
     if (seg.pos < seg.end) throw new Error('Connection closed early');
   } catch (err) {
-    if (stopping || ac.signal.reason === 'shrink' || ac.signal.reason === 'done') return;
+    // 'slow': dropped on purpose; its piece is picked up again right away.
+    if (stopping || ac.signal.reason === 'shrink' || ac.signal.reason === 'done' || ac.signal.reason === 'slow') return;
     if (err instanceof PoolError) {
       omitPool = 'bad'; // retried right away from the cookie pool
       return;
@@ -531,6 +590,7 @@ function restartFresh() {
   task.segments = null;
   task.etag = task.lastModified = null;
   controller = new AdaptiveController({ max: task.maxConnections || 6 });
+  controller.limited = !!limiter.rate;
   post({ type: 'restarted' });
   probe();
 }

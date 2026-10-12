@@ -483,3 +483,33 @@ test('checksums: MD5, SHA-1 and SHA-256 fed in pieces match node:crypto', () => 
   assert.equal(parseChecksum('not a hash'), null);
   assert.equal(parseChecksum('abc'), null);
 });
+
+test('a collapse in speed makes the controller measure and climb again', () => {
+  const c = new AdaptiveController({ max: 6 });
+  let t = 0;
+  let bytes = 0;
+  const run = (ms, perConn) => {
+    for (let end = t + ms; t < end; t += 250) {
+      bytes += (perConn * c.target * 250) / 1000;
+      c.tick(t, bytes, c.target);
+    }
+  };
+  run(30000, 10e6); // climbs to 6 at 10 MB/s per connection
+  assert.equal(c.target, 6);
+  assert.equal(c.phase, 'stable');
+  run(12000, 0.1e6); // every connection now crawls
+  assert.notEqual(c.phase, 'stable', 'it measures again instead of sitting at the old level');
+  const limited = new AdaptiveController({ max: 6 });
+  t = 0;
+  bytes = 0;
+  const run2 = (ms, perConn) => {
+    for (let end = t + ms; t < end; t += 250) {
+      bytes += (perConn * limited.target * 250) / 1000;
+      limited.tick(t, bytes, limited.target);
+    }
+  };
+  run2(30000, 10e6);
+  limited.limited = true; // a speed limit slows it on purpose
+  run2(12000, 0.1e6);
+  assert.equal(limited.phase, 'stable');
+});
