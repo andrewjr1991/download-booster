@@ -87,15 +87,26 @@ async function start(t) {
 // the server supports ranges and how big the file is, and its body becomes
 // connection #1, so starting a download never costs an extra round trip.
 async function probe() {
-  const ac = new AbortController();
+  let ac;
   let resp;
-  try {
-    resp = await fetch(task.url, fetchInit({ Range: 'bytes=0-' }, ac.signal));
-  } catch (err) {
-    return fail('network', err);
-  }
-  if (!resp.ok) {
+  // A takeover must decide quickly (the browser's own download is waiting),
+  // so only a hand-added task retries a failed first request.
+  const attempts = task.takeover ? 1 : 4;
+  for (let i = 0; i < attempts; i++) {
+    if (i) await new Promise((r) => setTimeout(r, 1000 * 2 ** (i - 1)));
+    if (stopping) return;
+    ac = new AbortController();
+    try {
+      resp = await fetch(task.url, fetchInit({ Range: 'bytes=0-' }, ac.signal));
+    } catch (err) {
+      if (i < attempts - 1) continue;
+      if (task.takeover) return reject('network');
+      return fail('network', err);
+    }
+    if (resp.ok) break;
     ac.abort();
+    const transient = resp.status === 429 || resp.status >= 500;
+    if (transient && i < attempts - 1) continue;
     if (task.takeover) return reject(`http-${resp.status}`);
     return fail('http', new HttpError(resp.status));
   }
