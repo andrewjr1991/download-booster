@@ -184,6 +184,38 @@ await check('auto takeover of a normal browser download', async () => {
   return `taken over as ${done.filename}`;
 });
 
+await check('hotlink-protected file: Referer from the page is sent on every request', async () => {
+  await setSettings({ autoTakeover: true, minSizeMB: 20, maxConnections: 6 });
+  const before = (await engine('list')).tasks.map((t) => t.id);
+  const mark = srv.log.length;
+  const p = await ctx.newPage();
+  await p.goto(`${srv.url}/page`);
+  await p.click('#a').catch(() => {});
+  let task;
+  for (let i = 0; i < 40 && !task; i++) {
+    await sleep(250);
+    task = (await engine('list')).tasks.find((t) => !before.includes(t.id));
+  }
+  if (!task) throw new Error('download was not taken over');
+  const done = await waitTask(task.id, (t) => t.status === 'completed');
+  const { hash } = await savedFileHash(done.downloadId);
+  if (hash !== srv.sha256) throw new Error('hash mismatch');
+  const ours = srv.log.slice(mark).filter((l) => l.path === '/hotlink.bin' && l.range);
+  const missing = ours.filter((l) => !l.referer).length;
+  if (missing) throw new Error(`${missing} of ${ours.length} range requests had no Referer`);
+  await p.close();
+  return `${ours.length} range requests, all with Referer`;
+});
+
+await check('Referer passed when adding by hand', async () => {
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6 });
+  const { id } = await engine('add', { url: `${srv.url}/hotlink.bin`, referrer: `${srv.url}/page`, maxConnections: 6 });
+  const done = await waitTask(id, (t) => t.status === 'completed');
+  const { hash } = await savedFileHash(done.downloadId);
+  if (hash !== srv.sha256) throw new Error('hash mismatch');
+  return 'ok';
+});
+
 await check('small files are left to the browser', async () => {
   await setSettings({ autoTakeover: true, minSizeMB: SIZE_MB + 1, maxConnections: 6 });
   const before = (await engine('list')).tasks.map((t) => t.id);

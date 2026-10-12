@@ -82,7 +82,7 @@ async function handle(msg) {
   }
 }
 
-async function add({ url, filename, takeover, maxConnections, source }) {
+async function add({ url, filename, takeover, maxConnections, source, referrer }) {
   const id = crypto.randomUUID();
   const t = {
     id,
@@ -103,6 +103,7 @@ async function add({ url, filename, takeover, maxConnections, source }) {
     controller: null,
     maxConnections: maxConnections || 6,
     source: source || 'manual',
+    referrer: referrer || null,
     createdAt: Date.now(),
     finishedAt: null,
     downloadId: null,
@@ -124,6 +125,7 @@ async function add({ url, filename, takeover, maxConnections, source }) {
   delete t.takeover;
   if (!result.accepted) {
     tasks.delete(id);
+    clearRequestHeaders(t);
     await deleteOpfs(t);
   } else {
     // The probe already started downloading; if that put us over the
@@ -162,7 +164,7 @@ function pump() {
   }
 }
 
-function startWorker(t) {
+async function startWorker(t) {
   workers.get(t.id)?.terminate();
   const w = new Worker(new URL('./task-worker.js', import.meta.url), { type: 'module' });
   workers.set(t.id, w);
@@ -170,6 +172,8 @@ function startWorker(t) {
   t.error = null;
   w.onmessage = (e) => onWorkerMessage(t, e.data);
   w.onerror = (e) => onWorkerMessage(t, { type: 'error', code: 'engine', message: e.message });
+  await setRequestHeaders(t);
+  if (workers.get(t.id) !== w) return; // paused or removed meanwhile
   w.postMessage({
     type: 'start',
     task: {
@@ -213,6 +217,7 @@ async function onWorkerMessage(t, m) {
         finalUrl: m.meta.finalUrl,
         segments: m.segments,
       });
+      if (t.finalUrl !== t.url) setRequestHeaders(t);
       if (pendingAdds.has(t.id)) {
         pendingAdds.get(t.id)({ accepted: true, id: t.id, filename: t.filename });
         pendingAdds.delete(t.id);
@@ -290,11 +295,33 @@ async function save(t) {
   }
 }
 
+// The background turns these into declarativeNetRequest rules that add the
+// Referer header to this task's requests (sites that block hotlinking).
+async function setRequestHeaders(t) {
+  if (!t.referrer) return;
+  try {
+    await chrome.runtime.sendMessage({
+      type: 'request-headers',
+      id: t.id,
+      urls: [t.url, t.finalUrl],
+      referrer: t.referrer,
+    });
+  } catch (err) {
+    console.warn('could not set Referer', err);
+  }
+}
+
+function clearRequestHeaders(t) {
+  if (!t.referrer) return;
+  chrome.runtime.sendMessage({ type: 'clear-request-headers', id: t.id }).catch(() => {});
+}
+
 async function onSaved(t, downloadId) {
   if (blobUrls.has(t.id)) URL.revokeObjectURL(blobUrls.get(t.id));
   blobUrls.delete(t.id);
   t.downloadId = downloadId ?? t.downloadId;
   await deleteOpfs(t);
+  clearRequestHeaders(t);
   t.segments = null;
   setStatus(t, 'completed');
 }
@@ -308,6 +335,7 @@ async function removeTask(t) {
     endWorker(t);
   }
   tasks.delete(t.id);
+  clearRequestHeaders(t);
   await db.delete(t.id);
   await deleteOpfs(t);
   pump();
