@@ -5,7 +5,6 @@ import { extensionOf } from './sniff.js';
 
 export const MEDIA_KINDS = ['video', 'audio', 'image', 'stream'];
 export const MIN_IMAGE_BYTES = 10 * 1024; // smaller images are icons and UI chrome
-export const MIN_AV_BYTES = 50 * 1024; // smaller audio/video is UI sounds and clips
 export const MAX_PER_TAB = 300;
 
 const VIDEO_EXT = new Set(['mp4', 'm4v', 'webm', 'mkv', 'mov', 'avi', 'flv', 'wmv', '3gp', 'ogv']);
@@ -64,7 +63,6 @@ export function classify({ url, type, mime, size }) {
     else if (type === 'media') kind = 'video';
   }
   if (kind === 'image' && size != null && size < MIN_IMAGE_BYTES) return null;
-  if ((kind === 'audio' || kind === 'video') && size != null && size < MIN_AV_BYTES) return null;
   return kind;
 }
 

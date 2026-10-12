@@ -192,7 +192,7 @@ test('media seen on the network: kinds, sizes, duplicates', () => {
   assert.equal(classify({ url: 'https://v.cdn/seg1.ts', mime: 'video/mp2t' }), null, 'stream pieces are skipped');
   assert.equal(classify({ url: 'https://v.cdn/icon.png', mime: 'image/png', size: 900 }), null, 'icons are skipped');
   assert.equal(classify({ url: 'https://v.cdn/p.jpg', mime: 'image/jpeg', size: 50000 }), 'image');
-  assert.equal(classify({ url: 'https://v.cdn/click.mp3', mime: 'audio/mpeg', size: 6500 }), null, 'UI sounds are skipped');
+  assert.equal(classify({ url: 'https://v.cdn/click.mp3', mime: 'audio/mpeg', size: 6500 }), 'audio', 'sound effects are kept');
   assert.equal(classify({ url: 'https://v.cdn/app.js', mime: 'text/javascript' }), null);
   assert.equal(classify({ url: 'blob:https://v.cdn/1', mime: 'video/mp4' }), null);
 
