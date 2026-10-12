@@ -6,6 +6,7 @@ import { categorize, extensionOf, prepareLinks, parsePastedUrls, mergeMedia } fr
 import { classify, sizeFrom, mediaKey, addMedia, compileRules } from '../src/media.js';
 import { parsePlaylist, ivFor, variantLabel } from '../src/hls.js';
 import { Mp4Stream, mux, canJoin, children, parseMoov } from '../src/fmp4.js';
+import { parseMpd, parseManifest, parseSidx, isoDuration, fillTemplate } from '../src/dash.js';
 import { readFileSync } from 'node:fs';
 
 test('parseContentRange', () => {
@@ -336,6 +337,7 @@ test('sniffed links: media the page loaded comes first, with its kind and size',
     [
       ['/a.mp4', 'video', 5e6, true],
       ['/s.mp3', 'audio', 3000, true],
+      ['/v.mpd', 'stream', 900, true],
       ['/about', 'other', null, false],
       ['/list.m3u8', 'stream', null, false],
     ],
@@ -369,4 +371,94 @@ test('batch rename', () => {
   assert.equal(applyRename('a/b.mp4', r(1, 'x:{n}')), 'x_01.mp4', 'unsafe characters replaced');
   assert.equal(applyRename('clip.mp4', null), 'clip.mp4');
   assert.equal(applyRename('clip.mp4', { pattern: '  ' }), 'clip.mp4');
+});
+
+test('DASH manifests: qualities, audio languages and their pieces', () => {
+  assert.equal(isoDuration('PT1H2M3.5S'), 3723.5);
+  assert.equal(isoDuration('PT8S'), 8);
+  assert.equal(fillTemplate('$RepresentationID$/seg-$Number%05d$-$Time$.m4s$$', { RepresentationID: 'v1', Number: 7, Time: 1200 }), 'v1/seg-00007-1200.m4s$');
+
+  const mpd = `<?xml version="1.0" encoding="utf-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT8S">
+  <!-- a comment -->
+  <BaseURL>https://cdn.example/v/</BaseURL>
+  <Period>
+    <AdaptationSet contentType="video" mimeType="video/mp4">
+      <SegmentTemplate timescale="1000" duration="2000" startNumber="1" initialization="$RepresentationID$/init.mp4" media="$RepresentationID$/$Number%03d$.m4s?a=1&amp;b=2"/>
+      <Representation id="360" bandwidth="800000" width="640" height="360" codecs="avc1.4d401e"/>
+      <Representation id="1080" bandwidth="5000000" width="1920" height="1080" codecs="avc1.640028"/>
+    </AdaptationSet>
+    <AdaptationSet contentType="audio" mimeType="audio/mp4" lang="fr">
+      <Representation id="fr" bandwidth="96000" codecs="mp4a.40.2">
+        <SegmentTemplate timescale="48000" initialization="fr-init.mp4" media="fr-$Time$.m4s">
+          <SegmentTimeline><S t="0" d="96000" r="2"/><S d="96000"/></SegmentTimeline>
+        </SegmentTemplate>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet contentType="audio" mimeType="audio/mp4" lang="en">
+      <Role schemeIdUri="urn:mpeg:dash:role:2011" value="main"/>
+      <Representation id="en-lo" bandwidth="64000" codecs="mp4a.40.2">
+        <BaseURL>en-lo.mp4</BaseURL>
+        <SegmentBase indexRange="800-899"><Initialization range="0-799"/></SegmentBase>
+      </Representation>
+      <Representation id="en" bandwidth="128000" codecs="mp4a.40.2">
+        <SegmentList timescale="1" duration="4">
+          <Initialization sourceURL="en.mp4" range="0-499"/>
+          <SegmentURL media="en.mp4" mediaRange="500-999"/>
+          <SegmentURL media="en.mp4" mediaRange="1000-1499"/>
+        </SegmentList>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet contentType="text" mimeType="text/vtt"><Representation id="sub" bandwidth="1"/></AdaptationSet>
+  </Period>
+</MPD>`;
+  const m = parseManifest(mpd, 'https://site.example/watch/manifest.mpd');
+  assert.equal(m.type, 'master');
+  assert.equal(m.dash, true);
+  assert.equal(m.live, false);
+  assert.deepEqual(m.variants.map((v) => v.height), [1080, 360]);
+  const v = m.variants[0];
+  assert.equal(v.url, 'https://site.example/watch/manifest.mpd#video=1080');
+  assert.equal(v.list.segments.length, 4);
+  assert.equal(v.list.segments[0].url, 'https://cdn.example/v/1080/001.m4s?a=1&b=2');
+  assert.equal(v.list.segments[3].url, 'https://cdn.example/v/1080/004.m4s?a=1&b=2');
+  assert.equal(v.list.segments[0].map.url, 'https://cdn.example/v/1080/init.mp4');
+  assert.equal(v.list.duration, 8);
+  assert.equal(v.list.fmp4, true);
+  // One entry per language, its best quality; the "main" one is the default.
+  assert.deepEqual(m.audio.map((a) => [a.name, a.default]), [['fr', false], ['en', true]]);
+  const fr = m.audio[0].list;
+  assert.deepEqual(fr.segments.map((s) => s.url.split('/').pop()), ['fr-0.m4s', 'fr-96000.m4s', 'fr-192000.m4s', 'fr-288000.m4s']);
+  assert.equal(fr.ext, 'm4a');
+  const en = m.audio[1].list;
+  assert.deepEqual(en.segments.map((s) => s.range), [{ offset: 500, length: 500 }, { offset: 1000, length: 500 }]);
+  assert.deepEqual(en.segments[0].map, { url: 'https://cdn.example/v/en.mp4', range: { offset: 0, length: 500 } });
+
+  // Single-file representation: pieces come from its sidx.
+  const lo = parseMpd(mpd.replace(/<Representation id="en" [\s\S]*?<\/Representation>/, ''), 'https://site.example/m.mpd').audio[1].list;
+  assert.deepEqual(lo.segmentBase, { url: 'https://cdn.example/v/en-lo.mp4', init: { offset: 0, length: 800 }, index: { offset: 800, length: 100 } });
+
+  // Live and DRM.
+  assert.equal(parseMpd(mpd.replace('type="static"', 'type="dynamic"'), 'https://x/').variants[0].list.endList, false);
+  const drm = parseMpd(mpd.replace('<Representation id="360"', '<ContentProtection schemeIdUri="urn:mpeg:dash:mp4protection:2011" value="cenc"/><Representation id="360"'), 'https://x/');
+  assert.equal(drm.variants[0].list.drm, true);
+  // m3u8 still goes to the HLS parser.
+  assert.equal(parseManifest('#EXTM3U\n#EXTINF:1,\na.ts\n#EXT-X-ENDLIST', 'https://x/a.m3u8').type, 'media');
+});
+
+test('DASH sidx: piece byte ranges', () => {
+  // styp, then a version 0 sidx with two references, first_offset 10.
+  const styp = [0, 0, 0, 12, ...Buffer.from('styp'), 0, 0, 0, 0];
+  const body = [0, 0, 0, 1, 0, 0, 0x03, 0xe8, 0, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 2];
+  const refs = [0, 0, 1, 0, 0, 0, 0x07, 0xd0, 0x90, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0x07, 0xd0, 0x90, 0, 0, 0];
+  const sidxSize = 8 + 4 + body.length + refs.length;
+  const sidx = [0, 0, 0, sidxSize, ...Buffer.from('sidx'), 0, 0, 0, 0, ...body, ...refs];
+  const bytes = new Uint8Array([...new Array(100).fill(0), ...styp, ...sidx]);
+  const at = 900; // bytes[0] is file offset 900; the index starts at 1000
+  const out = parseSidx(bytes, at, { offset: 1000, length: styp.length + sidx.length });
+  const start = 1000 + 12 + sidxSize + 10;
+  assert.deepEqual(out, [
+    { offset: start, length: 256, duration: 2 },
+    { offset: start + 256, length: 512, duration: 2 },
+  ]);
 });

@@ -670,6 +670,58 @@ await check('m3u8 with separate audio (MPEG-TS): the audio is saved next to the 
   return `saved ${done.filename} and ${extra.filename}`;
 });
 
+await check('DASH: the popup lists the qualities of a page’s .mpd and joins video and audio into one mp4', async () => {
+  await engine('set-limit', { maxActive: 3, speedLimit: 0 });
+  const p = await ctx.newPage();
+  await p.goto(`${srv.url}/dashpage`);
+  await sleep(1500);
+  const tabId = await sw.evaluate(async (url) => (await chrome.tabs.query({ url }))[0].id, `${srv.url}/dashpage`);
+  const pop = await ctx.newPage();
+  await pop.setViewportSize({ width: 400, height: 520 });
+  await pop.goto(`chrome-extension://${extId}/src/popup.html?tab=${tabId}`);
+  await pop.waitForSelector('#kinds button[data-kind="stream"][aria-pressed="true"]');
+  await pop.click('#media-list li button.act');
+  await pop.waitForSelector('.qualities label');
+  const qualities = await pop.$$eval('.qualities label', (ls) => ls.map((l) => l.textContent));
+  await pop.waitForFunction(() => !document.querySelector('#pv-download').disabled);
+  const info = await pop.textContent('#pv-info');
+  await pop.screenshot({ path: path.join(EXT, 'test', 'dash-screenshot.png') });
+  if (!/^90p/.test(qualities[0]) || qualities.length !== 2) throw new Error(`qualities ${JSON.stringify(qualities)}`);
+  const before = (await engine('list')).tasks.map((t) => t.id);
+  await pop.click('#pv-download');
+  await pop.waitForSelector('#view-tasks:not([hidden]) #task-list li');
+  const task = (await engine('list')).tasks.find((t) => !before.includes(t.id));
+  if (!task) throw new Error('nothing added');
+  const done = await waitTask(task.id, (t) => t.status === 'completed', 60000);
+  const { hash, item } = await savedFileHash(done.downloadId);
+  if (hash !== srv.mseSha256) throw new Error('joined file differs from the expected join');
+  if (done.filename !== 'DASH demo.mp4' || item.mime !== 'video/mp4') throw new Error(`saved as ${done.filename} (${item.mime})`);
+  if (srv.log.some((l) => l.path.startsWith('/dash/never/'))) throw new Error('fetched another quality or language');
+  await pop.close();
+  await p.close();
+  return `qualities ${JSON.stringify(qualities)}, "${info}", saved ${done.filename} (${done.size} bytes), ${done.hls.total} pieces`;
+});
+
+await check('DASH with a segment list (byte ranges) and a second language', async () => {
+  const { id } = await engine('add', { url: `${srv.url}/dash/list.mpd`, kind: 'hls', filename: 'DASH list', maxConnections: 4 });
+  const done = await waitTask(id, (t) => t.status === 'completed', 60000);
+  const { hash } = await savedFileHash(done.downloadId);
+  if (hash !== srv.mseSha256) throw new Error('joined file differs from the expected join');
+  if (srv.log.some((l) => l.path.startsWith('/dash/never/'))) throw new Error('fetched another quality or language');
+  return `saved ${done.filename}, ${done.hls.total} pieces, identical to the expected join`;
+});
+
+await check('DASH with one file per track: pieces read from its sidx index', async () => {
+  const mark = srv.log.length;
+  const { id } = await engine('add', { url: `${srv.url}/dash/base.mpd`, kind: 'hls', filename: 'DASH base', maxConnections: 4 });
+  const done = await waitTask(id, (t) => t.status === 'completed', 60000);
+  const { hash } = await savedFileHash(done.downloadId);
+  if (hash !== srv.mseSha256) throw new Error('joined file differs from the expected join');
+  const ranged = srv.log.slice(mark).filter((l) => /sidx\.mp4$/.test(l.path)).length;
+  if (done.hls.total < 4) throw new Error(`only ${done.hls.total} pieces`);
+  return `saved ${done.filename}, ${done.hls.total} pieces from the index, ${ranged} range requests`;
+});
+
 await check('small files are left to the browser', async () => {
   await setSettings({ autoTakeover: true, minSizeMB: SIZE_MB + 1, maxConnections: 6 });
   const before = (await engine('list')).tasks.map((t) => t.id);

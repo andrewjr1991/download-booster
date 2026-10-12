@@ -25,6 +25,14 @@
 //                   test/fixtures (separate video and audio) in small pieces.
 //                   Joined they equal mseSha256. ?end=0 feeds only the first half
 //                   and never ends the stream.
+//   /dash/list.mpd  DASH, SegmentList: byte ranges of /mse/video.mp4 and /mse/audio.mp4,
+//                   plus a lower quality and a second language that must not be
+//                   fetched (/dash/never/...). Joined they equal mseSha256.
+//   /dash/base.mpd  DASH, SegmentBase: one file per track (/dash/v-sidx.mp4,
+//                   /dash/a-sidx.mp4: the fixtures with a sidx index added).
+//   /dash/tpl.mpd   DASH, SegmentTemplate: video by $Number%03d$, audio by
+//                   SegmentTimeline $Time$, pieces under /dash/seg/.
+//   /dashpage       a page that loads /dash/tpl.mpd.
 // Add ?ttfb=1500 to delay every response by that many ms (a far-away CDN).
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -82,6 +90,77 @@ export function startServer({ port = 8787, sizeMB = 40, rateKBps = 2048 } = {}) 
     }
     lines.push('#EXT-X-ENDLIST');
     return lines.join('\n');
+  };
+  // DASH: the same fixtures as pieces, as single files with a sidx, and as
+  // ranges.
+  const dash = {};
+  for (const [kind, file] of [['v', '/mse/video.mp4'], ['a', '/mse/audio.mp4']]) {
+    const b = mseFiles[file];
+    const boxes = [];
+    for (let at = 0; at + 8 <= b.length; ) {
+      const size = b.readUInt32BE(at);
+      boxes.push({ type: b.toString('latin1', at + 4, at + 8), at, size });
+      at += size;
+    }
+    const moov = boxes.find((x) => x.type === 'moov');
+    const initEnd = moov.at + moov.size;
+    const frags = boxes.filter((x) => x.type === 'moof').map((x, i, all) => ({ at: x.at, end: all[i + 1]?.at ?? b.length }));
+    const sidx = Buffer.alloc(32 + 12 * frags.length);
+    sidx.writeUInt32BE(sidx.length, 0);
+    sidx.write('sidx', 4, 'latin1');
+    sidx.writeUInt32BE(1, 12); // reference_ID
+    sidx.writeUInt32BE(1000, 16); // timescale
+    sidx.writeUInt32BE(frags[0].at - initEnd, 24); // first_offset
+    sidx.writeUInt16BE(frags.length, 30);
+    frags.forEach((f, i) => {
+      sidx.writeUInt32BE(f.end - f.at, 32 + 12 * i);
+      sidx.writeUInt32BE(1000, 36 + 12 * i);
+      sidx.writeUInt32BE(0x90000000, 40 + 12 * i);
+    });
+    dash[kind] = {
+      file,
+      initEnd,
+      frags,
+      init: b.subarray(0, initEnd),
+      pieces: frags.map((f) => b.subarray(f.at, f.end)),
+      sidxFile: Buffer.concat([b.subarray(0, initEnd), sidx, b.subarray(initEnd)]),
+      sidxSize: sidx.length,
+    };
+  }
+  const mpd = (sets, seconds) =>
+    `<?xml version="1.0"?>\n<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT${seconds}S" profiles="urn:mpeg:dash:profile:isoff-on-demand:2011">\n<Period>\n${sets.join('\n')}\n</Period>\n</MPD>`;
+  const set = (type, attrs, reps) => `<AdaptationSet contentType="${type}" mimeType="${type}/mp4" ${attrs}>${reps}</AdaptationSet>`;
+  const dashSeconds = Math.max(dash.v.pieces.length, dash.a.pieces.length);
+  const lowVideo = '<Representation id="low" bandwidth="10000" width="80" height="45" codecs="vp09.00.10.08"><BaseURL>never/low.mp4</BaseURL></Representation>';
+  const french = set('audio', 'lang="fr"', '<Representation id="fr" bandwidth="64000" codecs="opus"><BaseURL>never/fr.mp4</BaseURL></Representation>');
+  const dashManifests = {
+    '/dash/list.mpd': mpd(
+      [
+        set(
+          'video',
+          '',
+          `${lowVideo}<Representation id="v" bandwidth="300000" width="160" height="90" codecs="vp09.00.10.08"><SegmentList timescale="1" duration="1"><Initialization sourceURL="/mse/video.mp4" range="0-${dash.v.initEnd - 1}"/>${dash.v.frags.map((f) => `<SegmentURL media="/mse/video.mp4" mediaRange="${f.at}-${f.end - 1}"/>`).join('')}</SegmentList></Representation>`,
+        ),
+        set('audio', 'lang="en"', `<Role schemeIdUri="urn:mpeg:dash:role:2011" value="main"/><Representation id="a" bandwidth="64000" codecs="opus"><SegmentList timescale="1" duration="1"><Initialization sourceURL="/mse/audio.mp4" range="0-${dash.a.initEnd - 1}"/>${dash.a.frags.map((f) => `<SegmentURL media="/mse/audio.mp4" mediaRange="${f.at}-${f.end - 1}"/>`).join('')}</SegmentList></Representation>`),
+        french,
+      ],
+      dashSeconds,
+    ),
+    '/dash/base.mpd': mpd(
+      [
+        set('video', '', `<Representation id="v" bandwidth="300000" width="160" height="90" codecs="vp09.00.10.08"><BaseURL>v-sidx.mp4</BaseURL><SegmentBase indexRange="${dash.v.initEnd}-${dash.v.initEnd + dash.v.sidxSize - 1}"><Initialization range="0-${dash.v.initEnd - 1}"/></SegmentBase></Representation>`),
+        set('audio', 'lang="en"', `<Representation id="a" bandwidth="64000" codecs="opus"><BaseURL>a-sidx.mp4</BaseURL><SegmentBase indexRange="${dash.a.initEnd}-${dash.a.initEnd + dash.a.sidxSize - 1}"><Initialization range="0-${dash.a.initEnd - 1}"/></SegmentBase></Representation>`),
+      ],
+      dashSeconds,
+    ),
+    '/dash/tpl.mpd': mpd(
+      [
+        set('video', '', `<SegmentTemplate timescale="1" duration="1" startNumber="1" initialization="seg/$RepresentationID$/init.mp4" media="seg/$RepresentationID$/$Number%03d$.m4s"/>${lowVideo}<Representation id="v" bandwidth="300000" width="160" height="90" codecs="vp09.00.10.08"/>`),
+        set('audio', 'lang="en"', `<Representation id="a" bandwidth="64000" codecs="opus"><SegmentTemplate timescale="48000" initialization="seg/a/init.mp4" media="seg/a/t$Time$.m4s"><SegmentTimeline><S t="0" d="48000" r="${dash.a.pieces.length - 1}"/></SegmentTimeline></SegmentTemplate></Representation>`),
+        french,
+      ],
+      dash.v.pieces.length,
+    ),
   };
   const hlsAudio = crypto.randomBytes(4 * 65536);
   const hlsAudioSha256 = crypto.createHash('sha256').update(hlsAudio).digest('hex');
@@ -186,6 +265,39 @@ export function startServer({ port = 8787, sizeMB = 40, rateKBps = 2048 } = {}) 
       lines.push('#EXT-X-ENDLIST');
       res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
       res.end(lines.join('\n'));
+      return;
+    }
+    if (dashManifests[path]) {
+      res.writeHead(200, { 'Content-Type': 'application/dash+xml' });
+      res.end(dashManifests[path]);
+      return;
+    }
+    if (path === '/dash/v-sidx.mp4' || path === '/dash/a-sidx.mp4') {
+      const body = dash[path[6]].sidxFile;
+      const r = /bytes=(\d+)-(\d*)/.exec(req.headers.range || '');
+      if (!r) {
+        res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': body.length, 'Accept-Ranges': 'bytes' });
+        res.end(body);
+        return;
+      }
+      const start = Number(r[1]);
+      const end = r[2] ? Math.min(Number(r[2]), body.length - 1) : body.length - 1;
+      res.writeHead(206, { 'Content-Type': 'video/mp4', 'Content-Range': `bytes ${start}-${end}/${body.length}`, 'Content-Length': end - start + 1 });
+      res.end(body.subarray(start, end + 1));
+      return;
+    }
+    const dashSeg = /^\/dash\/seg\/(v|a)\/(init\.mp4|(\d+)\.m4s|t(\d+)\.m4s)$/.exec(path);
+    if (dashSeg) {
+      const d = dash[dashSeg[1]];
+      const piece = dashSeg[2] === 'init.mp4' ? d.init : d.pieces[dashSeg[3] !== undefined ? Number(dashSeg[3]) - 1 : Number(dashSeg[4]) / 48000];
+      if (!piece) return res.writeHead(404).end();
+      res.writeHead(200, { 'Content-Type': 'video/iso.segment' });
+      res.end(piece);
+      return;
+    }
+    if (path === '/dashpage') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end('<!doctype html><title>DASH demo</title><p>DASH</p><script>fetch("/dash/tpl.mpd")</script>');
       return;
     }
     const tsPiece = /^\/hlsts\/(v|a)(\d+)\.(ts|aac)$/.exec(path);
