@@ -89,9 +89,6 @@
   "noRange": {
     "message": "Server does not support split downloads; using a single connection"
   },
-  "speedCompare": {
-    "message": "Single connection $1 → average $2 (×$3)"
-  },
   "avgSpeed": {
     "message": "Average $1"
   },

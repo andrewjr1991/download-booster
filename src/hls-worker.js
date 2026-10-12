@@ -460,7 +460,7 @@ function tick() {
 }
 
 function stats() {
-  return { peakSpeed, activeMs, singleSpeed: null, levels: {} };
+  return { peakSpeed, activeMs, levels: {} };
 }
 
 function finish(size) {

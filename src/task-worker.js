@@ -62,6 +62,7 @@ let segments = [];
 let stopping = false;
 let finished = false;
 let failures = 0;
+let rateGen = 0; // bumped when the speed limit changes
 let restarted = false;
 let ticker;
 let lastCheckpoint = 0;
@@ -90,11 +91,8 @@ self.onmessage = (e) => {
 };
 
 function setRate(rate) {
-  const was = limiter.rate;
+  rateGen += 1;
   limiter.setRate(rate);
-  if (controller) controller.limited = !!limiter.rate;
-  // More room than before: look for a better connection count again.
-  if (was && (!limiter.rate || limiter.rate > was * 1.2)) controller?.rethink(Date.now());
 }
 
 // The browser's own storage (OPFS): synchronous, flushed at checkpoints.
@@ -196,7 +194,6 @@ async function start(t) {
   sources = [{ url: t.url, primary: true, conns: 0, bytes: 0, failures: 0, bad: false }];
   limiter.setRate(task.rate || 0);
   controller = new AdaptiveController({ max: task.rangeSupported === false ? 1 : task.maxConnections || 6 });
-  controller.limited = !!limiter.rate;
   peakSpeed = task.stats?.peakSpeed || 0;
   activeMs = task.stats?.activeMs || 0;
   await openFile();
@@ -286,7 +283,7 @@ async function probe() {
 
   Object.assign(task, meta);
   primary().url = meta.finalUrl;
-  if (!rangeSupported) controller.max = 1;
+  if (!rangeSupported) controller.setMax(1);
   else checkMirrors();
   segments = [{ id: 0, start: 0, end: size ?? Infinity, pos: 0 }];
   post({ type: 'meta', meta, segments });
@@ -370,8 +367,7 @@ async function checkMirrors() {
   const good = sources.filter((x) => !x.bad).length;
   if (good > 1 && controller) {
     // Each server has its own connection limit.
-    controller.max = Math.min(16, (task.maxConnections || 6) * good);
-    controller.rethink(Date.now());
+    controller.setMax(Math.min(16, (task.maxConnections || 6) * good));
   }
 }
 
@@ -394,7 +390,7 @@ function hostOf(url) {
 }
 
 function stats() {
-  return { peakSpeed, activeMs, singleSpeed: controller.singleSpeed, levels: controller.levels, replaced };
+  return { peakSpeed, activeMs, levels: controller.levels, replaced };
 }
 
 // This connection's speed over the last CONN_WINDOW_MS (bytes/s), or null
@@ -518,8 +514,13 @@ async function runConn(seg, resp = null, ac = new AbortController(), pool = null
         seg.pos += chunk.byteLength;
         src.bytes += chunk.byteLength;
         failures = 0;
-        const wait = limiter.take(chunk.byteLength, Date.now());
-        if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+        // Wait out the speed limit in short steps, so lifting or raising it
+        // takes effect at once (with 6 connections a wait can run to seconds).
+        const until = Date.now() + limiter.take(chunk.byteLength, Date.now());
+        const gen = rateGen;
+        while (Date.now() < until && gen === rateGen && !stopping) {
+          await new Promise((r) => setTimeout(r, Math.min(250, until - Date.now())));
+        }
       }
       if (seg.pos >= seg.end) {
         // The segment was shortened by a split; drop the rest of the stream.
@@ -553,7 +554,7 @@ async function runConn(seg, resp = null, ac = new AbortController(), pool = null
       setTimeout(schedule, 510);
       return;
     }
-    onConnError(seg, err);
+    onConnError(seg, err, conn);
   } finally {
     src.conns -= 1;
     if (conns.get(seg.id) === conn) conns.delete(seg.id);
@@ -561,7 +562,7 @@ async function runConn(seg, resp = null, ac = new AbortController(), pool = null
   }
 }
 
-function onConnError(seg, err) {
+function onConnError(seg, err, conn) {
   if (err instanceof ChangedError) {
     // If-Range failed: the file on the server changed since we started.
     if (restarted) return fail('range-unsupported', err);
@@ -572,9 +573,12 @@ function onConnError(seg, err) {
     return fail(err instanceof HttpError ? 'http' : 'network', err);
   }
   failures += 1;
-  if (err instanceof HttpError && isThrottleStatus(err.status) && conns.size > 0) {
-    controller.backoff(Date.now());
-  }
+  // Push-back: "too many requests", or a new connection refused while the
+  // others are streaming (the server limits connections per client).
+  const now = Date.now();
+  const othersStreaming = [...conns.values()].some((c) => c !== conn && c.lastDataAt && now - c.lastDataAt <= FRESH_MS);
+  const throttled = err instanceof HttpError && isThrottleStatus(err.status) && conns.size > 1;
+  if (throttled || (!conn?.lastDataAt && othersStreaming)) controller.backoff(now);
   if (failures >= MAX_FAILURES) return fail(err instanceof HttpError ? 'http' : 'network', err);
   const delay = Math.min(30000, 1000 * 2 ** Math.min(failures - 1, 5));
   retryAt.set(seg.id, Date.now() + delay);
@@ -590,7 +594,6 @@ function restartFresh() {
   task.segments = null;
   task.etag = task.lastModified = null;
   controller = new AdaptiveController({ max: task.maxConnections || 6 });
-  controller.limited = !!limiter.rate;
   post({ type: 'restarted' });
   probe();
 }

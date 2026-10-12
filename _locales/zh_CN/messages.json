@@ -89,9 +89,6 @@
   "noRange": {
     "message": "服务器不支持分段，使用单连接下载"
   },
-  "speedCompare": {
-    "message": "单连接 $1 → 平均 $2（×$3）"
-  },
   "avgSpeed": {
     "message": "平均 $1"
   },
