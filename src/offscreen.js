@@ -90,7 +90,7 @@ async function handle(msg) {
   }
 }
 
-async function add({ url, filename, takeover, maxConnections, source, referrer, kind, variant }) {
+async function add({ url, filename, takeover, maxConnections, source, referrer, kind, variant, rename }) {
   const id = crypto.randomUUID();
   const t = {
     id,
@@ -115,6 +115,8 @@ async function add({ url, filename, takeover, maxConnections, source, referrer, 
     // 'hls': an m3u8 stream whose pieces are joined into one file (hls-worker.js).
     kind: kind === 'hls' ? 'hls' : 'file',
     variant: variant || null,
+    // Batch rename rule, applied once the server's file name is known.
+    rename: rename?.pattern ? rename : null,
     hls: null,
     createdAt: Date.now(),
     finishedAt: null,
@@ -226,6 +228,7 @@ async function startWorker(t) {
       rate: rateShare(),
       hls: t.hls,
       variant: t.variant,
+      rename: t.rename,
     },
   });
   if (!t.takeover) persist(t);

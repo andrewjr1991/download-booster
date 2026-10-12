@@ -45,11 +45,39 @@ export function mediaKey(url) {
   }
 }
 
+// The user's sniffing rules (settings.sniffRules, all text as typed) in the
+// form classify() uses: extra extensions per kind, the smallest image worth
+// listing, and address keywords to ignore.
+export const DEFAULT_RULES = { video: '', audio: '', image: '', minImageKB: MIN_IMAGE_BYTES / 1024, ignore: '' };
+const words = (text) =>
+  String(text || '')
+    .toLowerCase()
+    .split(/[\s,，;；]+/)
+    .map((w) => w.trim())
+    .filter(Boolean);
+export function compileRules(rules = {}) {
+  const r = { ...DEFAULT_RULES, ...rules };
+  const ext = new Map();
+  for (const kind of ['video', 'audio', 'image']) for (const e of words(r[kind])) ext.set(e.replace(/^\*?\./, ''), kind);
+  const kb = Number(r.minImageKB);
+  return { ext, minImage: Number.isFinite(kb) && kb >= 0 ? kb * 1024 : MIN_IMAGE_BYTES, ignore: words(r.ignore) };
+}
+const DEFAULT_COMPILED = compileRules();
+
+export function ignored(url, rules = DEFAULT_COMPILED) {
+  const u = String(url || '').toLowerCase();
+  return rules.ignore.some((w) => u.includes(w));
+}
+
 // What kind of media a response is, or null if it is not worth listing.
-export function classify({ url, type, mime, size }) {
+export function classify({ url, type, mime, size }, rules = DEFAULT_COMPILED) {
   if (!/^https?:/i.test(url || '')) return null;
+  if (ignored(url, rules)) return null;
   mime = (mime || '').split(';')[0].trim().toLowerCase();
   const ext = extensionOf(url);
+  // The user's own extensions win, even over the stream-piece filter.
+  const own = rules.ext.get(ext);
+  if (own) return own === 'image' && size != null && size < rules.minImage ? null : own;
   if (SEGMENT_MIME.test(mime) || SEGMENT_EXT.has(ext)) return null;
   if (STREAM_MIME.test(mime) || STREAM_EXT.has(ext)) return 'stream';
   let kind = null;
@@ -62,7 +90,7 @@ export function classify({ url, type, mime, size }) {
     else if (IMAGE_EXT.has(ext)) kind = 'image';
     else if (type === 'media') kind = 'video';
   }
-  if (kind === 'image' && size != null && size < MIN_IMAGE_BYTES) return null;
+  if (kind === 'image' && size != null && size < rules.minImage) return null;
   return kind;
 }
 
@@ -76,8 +104,8 @@ export function mediaName(url) {
 }
 
 // Add one response to a tab's list (newest last). Returns true if the list changed.
-export function addMedia(list, { url, type, mime, size, at = Date.now() }) {
-  const kind = classify({ url, type, mime, size });
+export function addMedia(list, { url, type, mime, size, at = Date.now() }, rules) {
+  const kind = classify({ url, type, mime, size }, rules);
   if (!kind) return false;
   const key = mediaKey(url);
   const found = list.find((m) => m.key === key);

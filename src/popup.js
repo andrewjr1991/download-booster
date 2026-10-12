@@ -419,6 +419,7 @@ function updateBulk() {
   const n = selectedMedia().length;
   $('#media-go').textContent = t('downloadSelected', [String(n)]);
   $('#media-go').disabled = n === 0;
+  $('#media-copy').disabled = n === 0;
   $('#media-all').checked = list.length > 0 && n === list.length;
   $('#media-all').indeterminate = n > 0 && n < list.length;
 }
@@ -432,6 +433,12 @@ $('#media-all').onchange = (e) => {
   renderMedia();
 };
 $('#media-go').onclick = () => download(selectedMedia());
+$('#media-copy').innerHTML = ICONS.copy;
+$('#media-copy').onclick = async () => {
+  const urls = selectedMedia().map((m) => m.url);
+  await navigator.clipboard.writeText(urls.join('\n'));
+  toast(t('copiedCount', [String(urls.length)]));
+};
 
 async function download(items) {
   if (!items.length) return;

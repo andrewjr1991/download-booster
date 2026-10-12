@@ -483,3 +483,7 @@ body.previewing {
   width: 15px;
   height: 15px;
 }
+#media-copy {
+  margin-left: auto;
+  margin-right: 6px;
+}

@@ -38,7 +38,14 @@
         </div>
         <ul id="sniff-list"></ul>
         <p id="sniff-empty" class="hint" data-i18n="sniffEmpty" hidden></p>
-        <button id="sniff-go" class="primary"></button>
+        <div class="sniff-rename">
+          <input id="sniff-rename" type="text" data-i18n-placeholder="renamePlaceholder" autocomplete="off" spellcheck="false" />
+          <p class="hint" id="sniff-rename-preview"></p>
+        </div>
+        <div class="sniff-actions">
+          <button id="sniff-copy" class="ghost"></button>
+          <button id="sniff-go" class="primary"></button>
+        </div>
       </section>
       <div id="sniff-preview" hidden>
         <div class="sp-box">
@@ -77,6 +84,28 @@
           <input type="number" id="speedLimitMB" min="0" step="0.1" data-i18n-placeholder="noLimit" />
         </label>
         <p class="hint" data-i18n="settingsHint"></p>
+        <h3 data-i18n="sniffRules"></h3>
+        <p class="hint" data-i18n="sniffRulesHint"></p>
+        <label class="row">
+          <span data-i18n="ruleVideo"></span>
+          <input type="text" id="rule-video" class="rule" data-i18n-placeholder="ruleExtPlaceholder" />
+        </label>
+        <label class="row">
+          <span data-i18n="ruleAudio"></span>
+          <input type="text" id="rule-audio" class="rule" data-i18n-placeholder="ruleAudioPlaceholder" />
+        </label>
+        <label class="row">
+          <span data-i18n="ruleImage"></span>
+          <input type="text" id="rule-image" class="rule" data-i18n-placeholder="ruleImagePlaceholder" />
+        </label>
+        <label class="row">
+          <span data-i18n="ruleMinImage"></span>
+          <input type="number" id="rule-minImageKB" min="0" max="100000" />
+        </label>
+        <label class="row rule-ignore">
+          <span data-i18n="ruleIgnore"></span>
+          <textarea id="rule-ignore" class="rule" rows="2" data-i18n-placeholder="ruleIgnorePlaceholder" spellcheck="false"></textarea>
+        </label>
       </details>
     </main>
 

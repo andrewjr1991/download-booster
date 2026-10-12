@@ -56,3 +56,26 @@ export function pickFilename({ disposition, url, fallback }) {
 export function isThrottleStatus(status) {
   return status === 429 || status === 503;
 }
+
+// Batch rename: `pattern` with {name} (original name without extension), {n}
+// (number in the batch, zero-padded), {title} (page title), {host} and {date}.
+// The original extension is kept unless the pattern places {ext} itself.
+export function applyRename(original, rename) {
+  const pattern = String(rename?.pattern || '').trim();
+  if (!pattern) return original;
+  const dot = original.lastIndexOf('.');
+  const base = dot > 0 ? original.slice(0, dot) : original;
+  const ext = dot > 0 ? original.slice(dot + 1) : '';
+  const width = String(rename.total || rename.n || 1).length;
+  const values = {
+    name: base,
+    ext,
+    n: String(rename.n || 1).padStart(width, '0'),
+    title: rename.title || '',
+    host: rename.host || '',
+    date: rename.date || '',
+  };
+  let out = pattern.replace(/\{(name|ext|n|title|host|date)\}/g, (_, k) => values[k]);
+  if (ext && !pattern.includes('{ext}')) out += `.${ext}`;
+  return sanitizeFilename(out);
+}

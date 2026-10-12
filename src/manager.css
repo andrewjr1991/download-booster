@@ -292,3 +292,45 @@ main {
   width: 90%;
   margin: 24px 0;
 }
+
+.sniff-rename input {
+  width: 100%;
+  box-sizing: border-box;
+}
+.sniff-rename .hint {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sniff-rename .hint:empty {
+  display: none;
+}
+.sniff-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+#settings h3 {
+  font-size: 14px;
+  margin: 16px 0 2px;
+}
+#settings .rule {
+  flex: 1;
+  min-width: 0;
+  max-width: 320px;
+  font: inherit;
+}
+.rule-ignore {
+  align-items: flex-start;
+}
+.sniff-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.sniff-actions button svg {
+  width: 15px;
+  height: 15px;
+}

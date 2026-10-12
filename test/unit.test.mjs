@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { AdaptiveController, RateLimiter, splitLargest, remaining, MIN_SPLIT } from '../src/scheduler.js';
-import { parseContentRange, filenameFromDisposition, sanitizeFilename, pickFilename } from '../src/http.js';
+import { parseContentRange, filenameFromDisposition, sanitizeFilename, pickFilename, applyRename } from '../src/http.js';
 import { categorize, extensionOf, prepareLinks, parsePastedUrls, mergeMedia } from '../src/sniff.js';
-import { classify, sizeFrom, mediaKey, addMedia } from '../src/media.js';
+import { classify, sizeFrom, mediaKey, addMedia, compileRules } from '../src/media.js';
 import { parsePlaylist, ivFor, variantLabel } from '../src/hls.js';
 import { Mp4Stream, mux, canJoin, children, parseMoov } from '../src/fmp4.js';
 import { readFileSync } from 'node:fs';
@@ -341,4 +341,32 @@ test('sniffed links: media the page loaded comes first, with its kind and size',
     ],
   );
   assert.equal(merged[0].text, 'Trailer', 'the link text is kept');
+});
+
+test('sniffing rules: own extensions, image size, ignored addresses', () => {
+  const rules = compileRules({ video: 'm4s, .dat', audio: '*.amr', minImageKB: 0, ignore: 'ADS.example.com /track/' });
+  assert.equal(classify({ url: 'https://x.com/a.m4s', mime: 'video/iso.segment' }, rules), 'video', 'own extension beats the piece filter');
+  assert.equal(classify({ url: 'https://x.com/a.dat', mime: 'text/plain' }, rules), 'video');
+  assert.equal(classify({ url: 'https://x.com/a.amr' }, rules), 'audio');
+  assert.equal(classify({ url: 'https://x.com/i.png', mime: 'image/png', size: 300 }, rules), 'image', 'no minimum');
+  assert.equal(classify({ url: 'https://x.com/i.png', mime: 'image/png', size: 300 }), null, 'default minimum');
+  assert.equal(classify({ url: 'https://ads.example.com/v.mp4', mime: 'video/mp4' }, rules), null);
+  assert.equal(classify({ url: 'https://x.com/track/p.gif', mime: 'image/gif', size: 5e4 }, rules), null);
+  const links = prepareLinks(
+    [{ url: 'https://x.com/a.dat' }, { url: 'https://ads.example.com/b.zip' }, { url: 'https://x.com/c.zip' }],
+    rules,
+  );
+  assert.deepEqual(links.map((l) => [l.url.slice(14), l.category]), [['a.dat', 'video'], ['c.zip', 'archive']]);
+  assert.equal(compileRules({ minImageKB: 'x' }).minImage, 10 * 1024, 'bad input falls back');
+});
+
+test('batch rename', () => {
+  const r = (n, pattern = '{title}_{n}') => ({ pattern, n, total: 12, title: 'My Trip', host: 'x.com', date: '20261012' });
+  assert.equal(applyRename('IMG_001.JPG', r(3)), 'My Trip_03.JPG', 'keeps the extension');
+  assert.equal(applyRename('clip.mp4', r(1, '{date}-{host}-{name}')), '20261012-x.com-clip.mp4');
+  assert.equal(applyRename('clip.mp4', r(1, '{name}.{ext}.bak')), 'clip.mp4.bak');
+  assert.equal(applyRename('download', r(2, 'file {n}')), 'file 02');
+  assert.equal(applyRename('a/b.mp4', r(1, 'x:{n}')), 'x_01.mp4', 'unsafe characters replaced');
+  assert.equal(applyRename('clip.mp4', null), 'clip.mp4');
+  assert.equal(applyRename('clip.mp4', { pattern: '  ' }), 'clip.mp4');
 });

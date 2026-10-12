@@ -363,6 +363,59 @@ await check('manager sniff list downloads a page’s m3u8 as one joined video', 
   return `chips ${chips.join(' ')}, saved ${done.filename}`;
 });
 
+await check('batch: sniffing rules, copying links and a rename rule', async () => {
+  // Rules typed into the manager's settings: show small images, ignore "photo".
+  await page.evaluate(() => (document.querySelector('#settings').open = true));
+  await page.fill('#rule-minImageKB', '1');
+  await page.dispatchEvent('#rule-minImageKB', 'change');
+  await page.fill('#rule-ignore', 'photo');
+  await page.dispatchEvent('#rule-ignore', 'change');
+  await sleep(300);
+  const p = await ctx.newPage();
+  await p.goto(`${srv.url}/media`);
+  await sleep(1500);
+  const tabId = await sw.evaluate(async (url) => (await chrome.tabs.query({ url }))[0].id, `${srv.url}/media`);
+  const media = await sw.evaluate(async (id) => (await chrome.storage.session.get(`media:${id}`))[`media:${id}`].map((m) => m.name), tabId);
+  if (!media.includes('icon.png') || media.includes('photo.jpg')) throw new Error(`media ${JSON.stringify(media)}`);
+  await p.close();
+  await page.fill('#rule-minImageKB', '10');
+  await page.fill('#rule-ignore', '');
+  await page.dispatchEvent('#rule-ignore', 'change');
+
+  // Rename and copy in the page link list.
+  const before = (await engine('list')).tasks.map((t) => t.id);
+  const q = await ctx.newPage();
+  await q.goto(`${srv.url}/page`);
+  await sw.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    await sniffPage(tab);
+  }, `${srv.url}/page`);
+  await page.waitForURL(/sniff=1/);
+  await page.waitForSelector('#sniff:not([hidden]) #sniff-list li');
+  await page.fill('#sniff-rename', 'batch-{n}');
+  const preview = await page.textContent('#sniff-rename-preview');
+  if (!preview.includes('batch-1.mp4') || !preview.includes('batch-2.bin')) throw new Error(`preview "${preview}"`);
+  // Tests can't read the clipboard here: note what the page writes to it.
+  await page.evaluate(() => {
+    const write = navigator.clipboard.writeText.bind(navigator.clipboard);
+    navigator.clipboard.writeText = (text) => ((window.copiedText = text), write(text).catch(() => {}));
+  });
+  await page.click('#sniff-copy');
+  const copied = await page.evaluate(() => window.copiedText);
+  if (copied !== `${srv.url}/clip.mp4\n${srv.url}/hotlink.bin`) throw new Error(`copied ${JSON.stringify(copied)}`);
+  await page.click('#sniff-go');
+  let added = [];
+  for (let i = 0; i < 20 && added.length < 2; i++) {
+    await sleep(250);
+    added = (await engine('list')).tasks.filter((t) => !before.includes(t.id));
+  }
+  const names = [];
+  for (const task of added) names.push((await waitTask(task.id, (t) => t.status === 'completed')).filename);
+  if (names.sort().join() !== 'batch-1.mp4,batch-2.bin') throw new Error(`saved ${JSON.stringify(names)}`);
+  await q.close();
+  return `rules: icon.png shown, photo.jpg ignored; preview "${preview}"; 2 links copied; saved ${names.join(', ')}`;
+});
+
 await check('speed limit: all tasks together stay under it, and lifting it speeds up', async () => {
   const LIMIT = 1.5 * 1048576;
   await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6, speedLimitMB: 1.5 });
