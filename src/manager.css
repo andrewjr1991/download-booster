@@ -312,6 +312,13 @@ main {
   gap: 8px;
   justify-content: flex-end;
 }
+.folder-row {
+  flex-wrap: wrap;
+}
+.folder-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
 #settings h3 {
   font-size: 14px;
   margin: 16px 0 2px;

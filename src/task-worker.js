@@ -1,6 +1,9 @@
 // One dedicated worker per download task. It owns the task's OPFS file through
 // a sync access handle (only available in workers), runs every connection's
-// fetch, and writes each chunk at its byte offset.
+// fetch, and writes each chunk at its byte offset. When the user picked a
+// download folder, the file is written straight into it instead (as
+// "<name>.part", renamed when done); the browser commits those writes when
+// the file is closed, so pausing is what makes the progress stick.
 
 import {
   AdaptiveController,
@@ -13,6 +16,7 @@ import {
   RateLimiter,
 } from './scheduler.js';
 import { parseContentRange, pickFilename, isThrottleStatus, applyRename } from './http.js';
+import { uniqueName, finalize } from './folder.js';
 
 const TICK_MS = 500;
 const CHECKPOINT_MS = 2000;
@@ -30,7 +34,7 @@ let omitPool = 'untested'; // 'untested' | 'ok' | 'bad'
 let protocol = null;
 
 let task;
-let handle;
+let handle; // where the bytes go: OpfsFile or FolderFile
 let controller;
 const meter = new SpeedMeter(2000);
 const limiter = new RateLimiter(0); // this task's share of the global speed limit
@@ -72,11 +76,67 @@ function setRate(rate) {
   if (was && (!limiter.rate || limiter.rate > was * 1.2)) controller?.rethink(Date.now());
 }
 
+// The browser's own storage (OPFS): synchronous, flushed at checkpoints.
+class OpfsFile {
+  constructor(h) {
+    this.h = h;
+  }
+  write(data, at) {
+    this.h.write(data, { at });
+  }
+  truncate(size) {
+    this.h.truncate(size);
+  }
+  flush() {
+    this.h.flush();
+  }
+  async close() {
+    this.h.flush();
+    this.h.close();
+  }
+}
+
+// A file in the user's folder: asynchronous writes, kept in order, and
+// committed by close().
+class FolderFile {
+  constructor(ws) {
+    this.ws = ws;
+    this.queue = Promise.resolve();
+  }
+  write(data, at) {
+    this.queue = this.queue.then(() => this.ws.write({ type: 'write', position: at, data }));
+    return this.queue;
+  }
+  truncate(size) {
+    this.queue = this.queue.then(() => this.ws.truncate(size));
+    return this.queue;
+  }
+  flush() {}
+  async close() {
+    await this.queue;
+    await this.ws.close();
+  }
+  async discard() {
+    await this.ws.abort().catch(() => {});
+  }
+}
+
 async function openFile() {
+  if (task.folder) {
+    // Resuming: carry on in the .part file (its committed bytes are kept).
+    if (task.folder.part && task.segments) await openPart(task.folder.part, true);
+    return; // a new download opens its .part once the name is known
+  }
   const root = await navigator.storage.getDirectory();
   const dir = await root.getDirectoryHandle('downloads', { create: true });
   const fh = await dir.getFileHandle(task.opfsName, { create: true });
-  handle = await fh.createSyncAccessHandle();
+  handle = new OpfsFile(await fh.createSyncAccessHandle());
+}
+
+async function openPart(name, keep) {
+  const fh = await task.folder.dir.getFileHandle(name, { create: true });
+  handle = new FolderFile(await fh.createWritable({ keepExistingData: keep }));
+  task.folder.part = name;
 }
 
 function fetchInit(headers, signal, credentials = 'include') {
@@ -183,16 +243,22 @@ async function probe() {
     if (size < task.takeover.minSize) return reject('too-small', ac);
   }
 
-  if (size) {
+  if (task.folder) {
+    try {
+      if (!handle) await openPart(task.folder.part || `${await uniqueName(task.folder.dir, meta.filename, '.part')}.part`, false);
+    } catch (err) {
+      ac.abort();
+      return fail('folder', err);
+    }
+    meta.part = task.folder.part;
+  } else if (size) {
     const est = await navigator.storage.estimate();
     if (est.quota && est.quota - est.usage < size) {
       ac.abort();
       return fail('no-space', new Error('Not enough browser storage'));
     }
-    handle.truncate(size);
-  } else {
-    handle.truncate(0);
   }
+  handle.truncate(size || 0);
 
   Object.assign(task, meta);
   if (!rangeSupported) controller.max = 1;
@@ -237,7 +303,7 @@ function tick() {
 
   let checkpoint = false;
   if (now - lastCheckpoint >= CHECKPOINT_MS) {
-    handle.flush();
+    handle?.flush();
     lastCheckpoint = now;
     checkpoint = true;
   }
@@ -327,7 +393,9 @@ async function runConn(seg, resp = null, ac = new AbortController(), pool = choo
       if (chunk.byteLength > room) chunk = chunk.subarray(0, room);
       conn.lastDataAt = Date.now();
       if (chunk.byteLength) {
-        handle.write(chunk, { at: seg.pos });
+        const writing = handle.write(chunk, seg.pos);
+        if (writing) await writing.catch((err) => fail('folder', err));
+        if (stopping) break;
         seg.pos += chunk.byteLength;
         failures = 0;
         const wait = limiter.take(chunk.byteLength, Date.now());
@@ -392,33 +460,41 @@ function restartFresh() {
   probe();
 }
 
-function finish() {
+async function finish() {
   if (finished) return;
   finished = true;
   clearInterval(ticker);
-  if (task.size != null) handle.truncate(task.size);
-  handle.flush();
-  closeHandle();
+  let savedAs = null;
+  try {
+    if (task.size != null) handle.truncate(task.size);
+    await handle.close();
+    handle = null;
+    if (task.folder) savedAs = await finalize(task.folder.dir, task.folder.part, task.filename || 'download');
+  } catch (err) {
+    finished = false;
+    return fail(task.folder ? 'folder' : 'engine', err);
+  }
   post({
     type: 'done',
     size: task.size,
+    savedAs,
     segments: segments.map(({ id, start, end, pos }) => ({ id, start, end, pos })),
     stats: stats(),
   });
 }
 
-function stop(type) {
+async function stop(type) {
   if (stopping || finished) return;
   stopping = true;
   clearInterval(ticker);
   for (const c of conns.values()) c.ac.abort('stop');
   conns.clear();
-  try {
-    handle?.flush();
-  } catch {
-    /* handle may already be closed */
+  // Canceled: nothing to keep. Paused: commit what is written.
+  if (type === 'canceled' && handle instanceof FolderFile) {
+    await handle.discard();
+    handle = null;
   }
-  closeHandle();
+  await closeHandle();
   post({
     type,
     downloaded: downloadedBytes(segments),
@@ -427,18 +503,13 @@ function stop(type) {
   });
 }
 
-function fail(code, err) {
+async function fail(code, err) {
   if (stopping || finished) return;
   stopping = true;
   clearInterval(ticker);
   for (const c of conns.values()) c.ac.abort('stop');
   conns.clear();
-  try {
-    handle?.flush();
-  } catch {
-    /* ignore */
-  }
-  closeHandle();
+  await closeHandle();
   post({
     type: 'error',
     code,
@@ -447,11 +518,12 @@ function fail(code, err) {
   });
 }
 
-function closeHandle() {
-  try {
-    handle?.close();
-  } catch {
-    /* already closed */
-  }
+async function closeHandle() {
+  const h = handle;
   handle = null;
+  try {
+    await h?.close();
+  } catch {
+    /* already closed, or the folder went away */
+  }
 }

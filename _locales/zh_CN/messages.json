@@ -334,5 +334,43 @@
   },
   "separateAudio": {
     "message": "+ 音轨 $1（一起下载并合并）"
+  },
+  "saveFolder": {
+    "message": "保存位置"
+  },
+  "folderChoose": {
+    "message": "选择文件夹…"
+  },
+  "folderGrant": {
+    "message": "允许访问"
+  },
+  "folderReset": {
+    "message": "改回浏览器下载文件夹"
+  },
+  "folderDefault": {
+    "message": "浏览器的下载文件夹"
+  },
+  "folderHintDefault": {
+    "message": "文件会先在浏览器内部拼好再保存，大文件会短暂占用两倍的硬盘空间。选择一个文件夹后，文件边下边直接写进去。"
+  },
+  "folderHintOn": {
+    "message": "下载时直接写进这个文件夹（完成前叫“文件名.part”）。暂停会保存进度；浏览器意外关闭后，从上次暂停的地方继续。"
+  },
+  "folderHintGrant": {
+    "message": "浏览器需要你再次允许写入这个文件夹。允许之前，新的下载会存到浏览器的下载文件夹。"
+  },
+  "folderUnsupported": {
+    "message": "这个浏览器不支持保存到指定文件夹。"
+  },
+  "savedTo": {
+    "message": "已保存到 $FOLDER$",
+    "placeholders": {
+      "folder": {
+        "content": "$1"
+      }
+    }
+  },
+  "errFolder": {
+    "message": "无法写入下载文件夹（请在设置里允许访问）"
   }
 }

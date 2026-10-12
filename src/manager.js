@@ -2,6 +2,7 @@ import { CATEGORY_ORDER, categorize, parsePastedUrls } from './sniff.js';
 import { ICONS } from './icons.js';
 import { DEFAULT_RULES } from './media.js';
 import { pickFilename, applyRename } from './http.js';
+import { getFolder, setFolder, folderPermission } from './folder.js';
 import {
   t,
   DEFAULT_SETTINGS,
@@ -89,6 +90,7 @@ function updateCard(card, task) {
       parts.push(t('timeLeft', [duration((estimate - task.downloaded) / task.speed)]));
     }
   }
+  if (task.status === 'completed' && task.savedTo) parts.push(t('savedTo', [task.savedTo]));
   card.querySelector('.meta').textContent = parts.join(' · ');
 
   card.querySelector('.compare').textContent = compareLine(task);
@@ -128,7 +130,8 @@ function renderActions(box, task) {
   if (task.status === 'downloading' || task.status === 'queued') wanted.push(['pause', 'pause', 'pause'], ['cancel', 'cancel', 'close']);
   if (task.status === 'paused') wanted.push(['resume', 'resume', 'play'], ['cancel', 'cancel', 'close']);
   if (task.status === 'error') wanted.push(['retry', 'resume', 'retry'], ['remove', 'remove', 'trash']);
-  if (task.status === 'completed') wanted.push(['showInFolder', 'show', 'folder'], ['remove', 'remove', 'trash']);
+  // Files saved into the picked folder are not in the browser's download list.
+  if (task.status === 'completed') wanted.push(...(task.savedTo ? [] : [['showInFolder', 'show', 'folder']]), ['remove', 'remove', 'trash']);
   const key = wanted.map((w) => w[0]).join();
   if (box.dataset.key === key) return;
   box.dataset.key = key;
@@ -551,6 +554,40 @@ async function saveSettings() {
   await engine('set-limit', { maxActive: settings.maxActive, speedLimit: settings.speedLimitMB * MB });
   refresh();
 }
+// ---- download folder ---------------------------------------------------------------
+
+async function showFolder() {
+  const dir = await getFolder().catch(() => null);
+  const perm = dir ? await folderPermission(dir) : null;
+  $('#folder-name').textContent = dir ? dir.name : t('folderDefault');
+  $('#folder-reset').hidden = !dir;
+  $('#folder-grant').hidden = !dir || perm === 'granted';
+  $('#folder-hint').textContent = t(!dir ? 'folderHintDefault' : perm === 'granted' ? 'folderHintOn' : 'folderHintGrant');
+  // The browser asks again after a restart: make that hard to miss.
+  if (dir && perm !== 'granted') $('#settings').open = true;
+}
+
+$('#folder-choose').addEventListener('click', async () => {
+  if (!window.showDirectoryPicker) return note(t('folderUnsupported'));
+  try {
+    const dir = await window.showDirectoryPicker({ id: 'downloads', mode: 'readwrite', startIn: 'downloads' });
+    await setFolder(dir);
+  } catch (err) {
+    if (err?.name !== 'AbortError') note(String(err?.message || err));
+  }
+  showFolder();
+});
+$('#folder-grant').addEventListener('click', async () => {
+  const dir = await getFolder();
+  await dir?.requestPermission({ mode: 'readwrite' }).catch(() => {});
+  showFolder();
+});
+$('#folder-reset').addEventListener('click', async () => {
+  await setFolder(null);
+  showFolder();
+});
+showFolder();
+
 for (const id of ['autoTakeover', 'minSizeMB', 'maxConnections', 'maxActive', 'speedLimitMB']) $('#' + id).addEventListener('change', saveSettings);
 for (const el of document.querySelectorAll('#settings .rule, #rule-minImageKB')) el.addEventListener('change', saveSettings);
 
