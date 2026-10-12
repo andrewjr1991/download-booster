@@ -3,6 +3,7 @@ import { ICONS } from './icons.js';
 import { DEFAULT_RULES } from './media.js';
 import { pickFilename, applyRename } from './http.js';
 import { getFolder, setFolder, folderPermission } from './folder.js';
+import { parseChecksum, ALGO_NAMES } from './hash.js';
 import {
   t,
   DEFAULT_SETTINGS,
@@ -91,6 +92,12 @@ function updateCard(card, task) {
     }
   }
   if (task.status === 'completed' && task.savedTo) parts.push(t('savedTo', [task.savedTo]));
+  if (task.verified?.ok) parts.push(t('checksumOk', [ALGO_NAMES[task.verified.algo]]));
+  else if (task.checksum && task.status !== 'completed' && task.status !== 'error') parts.push(t('checksumPending', [ALGO_NAMES[task.checksum]]));
+  // Mirrors: how much came from each address.
+  if (task.mirrors && task.status !== 'error') {
+    parts.push(task.mirrors.map((m) => (m.bad ? t('mirrorUnusable', [m.host]) : `${m.host} ${bytes(m.bytes)}`)).join(', '));
+  }
   card.querySelector('.meta').textContent = parts.join(' · ');
 
   card.querySelector('.compare').textContent = compareLine(task);
@@ -225,8 +232,24 @@ $('#add').addEventListener('submit', async (e) => {
   e.preventDefault();
   const urls = parsePastedUrls($('#url').value);
   if (!urls.length) return note(t('invalidUrl'));
-  await addUrls(urls);
+  // More options: a checksum to verify against, and mirrors (other
+  // addresses of the same file). Both are about one file.
+  const sum = $('#checksum').value.trim();
+  const mirrors = parsePastedUrls($('#mirrors').value);
+  const extra = {};
+  if (sum || mirrors.length) {
+    if (urls.length > 1) return note(t('moreOneFile'));
+    if (sum) {
+      extra.checksum = parseChecksum(sum);
+      if (!extra.checksum) return note(t('badChecksum'));
+    }
+    extra.mirrors = mirrors;
+  }
+  await addUrls(urls, extra);
   $('#url').value = '';
+  $('#checksum').value = '';
+  $('#mirrors').value = '';
+  $('#add-more').open = false;
   fitUrlBox();
   note(urls.length > 1 ? t('addedCount', [String(urls.length)]) : '');
 });

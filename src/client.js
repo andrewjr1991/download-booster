@@ -75,9 +75,11 @@ export const ERRORS = {
   live: 'errLive',
   drm: 'errDrm',
   folder: 'errFolder',
+  checksum: 'errChecksum',
 };
 
 export function statusText(task) {
+  if (task.status === 'downloading' && task.verifying) return t('statusVerifying', [`${Math.floor((task.verifying.done / (task.verifying.size || 1)) * 100)}%`]);
   return task.status === 'error' && task.error
     ? `${t('statusError')}: ${t(ERRORS[task.error.code] || 'errEngine')}`
     : t(STATUS[task.status] || 'statusQueued');

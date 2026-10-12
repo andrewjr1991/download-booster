@@ -98,7 +98,7 @@ async function usableFolder() {
   return dir && (await folderPermission(dir)) === 'granted' ? dir : null;
 }
 
-async function add({ url, filename, takeover, maxConnections, source, referrer, kind, variant, rename }) {
+async function add({ url, filename, takeover, maxConnections, source, referrer, kind, variant, rename, mirrors, checksum }) {
   const id = crypto.randomUUID();
   const folder = await usableFolder();
   const t = {
@@ -126,6 +126,11 @@ async function add({ url, filename, takeover, maxConnections, source, referrer, 
     variant: variant || null,
     // Batch rename rule, applied once the server's file name is known.
     rename: rename?.pattern ? rename : null,
+    // Other addresses of the same file, and the checksum ({ algo, hex }) it
+    // is verified against when done.
+    mirrors: Array.isArray(mirrors) ? mirrors.filter((u) => /^https?:/i.test(u) && u !== url).slice(0, 8) : [],
+    checksum: checksum?.algo && checksum?.hex ? { algo: checksum.algo, hex: checksum.hex } : null,
+    verified: null,
     hls: null,
     // The picked folder (a directory handle) the file goes into, its
     // "<name>.part" while downloading, and the progress last committed there.
@@ -221,6 +226,7 @@ async function startWorker(t) {
   workers.set(t.id, w);
   t.status = 'downloading';
   t.error = null;
+  t.verifying = null;
   w.onmessage = (e) => onWorkerMessage(t, e.data);
   w.onerror = (e) => onWorkerMessage(t, { type: 'error', code: 'engine', message: e.message });
   shareSpeedLimit();
@@ -253,6 +259,8 @@ async function startWorker(t) {
       hls: t.hls,
       variant: t.variant,
       rename: t.rename,
+      mirrors: t.mirrors || [],
+      checksum: t.checksum || null,
     },
   });
   if (!t.takeover) persist(t);
@@ -317,8 +325,16 @@ async function onWorkerMessage(t, m) {
         segments: m.segments,
         controller: m.controller,
         stats: m.stats,
+        mirrorStats: m.mirrors || null,
       });
       if (m.checkpoint) persist(t);
+      break;
+    case 'verifying':
+      // All bytes are in (and committed): reading them back for the checksum.
+      t.verifying = { done: m.verified, size: m.size };
+      t.speed = 0;
+      t.connections = 0;
+      if (t.folderPart) t.folderSegments = m.segments;
       break;
     case 'stopped':
       endWorker(t);
@@ -332,6 +348,17 @@ async function onWorkerMessage(t, m) {
       break;
     case 'error':
       endWorker(t);
+      t.verifying = null;
+      if (m.verified) t.verified = m.verified;
+      if (m.reset) {
+        // The checksum didn't match: a retry starts from scratch.
+        Object.assign(t, { segments: null, folderSegments: null, downloaded: 0, etag: null, lastModified: null });
+        await deleteOpfs(t);
+        if (t.folder && t.folderPart) await t.folder.removeEntry(t.folderPart).catch(() => {});
+        t.folderPart = null;
+        setStatus(t, 'error', { code: m.code, message: m.message });
+        break;
+      }
       if (pendingAdds.has(t.id)) {
         pendingAdds.get(t.id)({ accepted: false, reason: m.code });
         pendingAdds.delete(t.id);
@@ -350,7 +377,8 @@ async function onWorkerMessage(t, m) {
       break;
     case 'done':
       endWorker(t);
-      Object.assign(t, { size: m.size, downloaded: m.size, segments: m.segments, stats: m.stats });
+      Object.assign(t, { size: m.size, downloaded: m.size, segments: m.segments, stats: m.stats, verified: m.verified || null, verifying: null });
+      if (m.mirrors) t.mirrorStats = m.mirrors;
       t.finishedAt = Date.now();
       if (m.savedAs) {
         // Written straight into the folder: nothing left to save.
@@ -460,7 +488,7 @@ async function setRequestHeaders(t) {
     await chrome.runtime.sendMessage({
       type: 'request-headers',
       id: t.id,
-      urls: [t.url, t.finalUrl],
+      urls: [t.url, t.finalUrl, ...(t.mirrors || [])],
       domains: t.refererHosts || [],
       referrer: t.referrer,
     });
@@ -573,6 +601,10 @@ function summaries() {
       finishedAt: t.finishedAt,
       downloadId: t.downloadId,
       savedTo: t.savedTo || null,
+      checksum: t.checksum?.algo || null,
+      verified: t.verified ? { algo: t.verified.algo, ok: t.verified.ok } : null,
+      verifying: t.verifying || null,
+      mirrors: t.mirrorStats || null,
       kind: t.kind,
       hls: t.hls && { done: t.hls.done, total: t.hls.total, duration: t.hls.duration },
     }));

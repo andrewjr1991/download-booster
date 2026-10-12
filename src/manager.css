@@ -50,6 +50,30 @@ main {
   font: inherit;
 }
 
+#add-more {
+  margin: 0 2px 4px;
+  font-size: 13px;
+}
+#add-more summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+#add-more .row {
+  margin: 8px 0;
+}
+#add-more .row > span {
+  flex: none;
+  width: 6.5em;
+}
+#add-more .wide {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+}
+.mirrors-row {
+  align-items: flex-start;
+}
+
 #sniff {
   margin-top: 14px;
   background: var(--card);
