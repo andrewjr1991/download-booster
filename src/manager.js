@@ -75,10 +75,17 @@ function updateCard(card, task) {
   const parts = [];
   const done = task.status === 'completed' ? task.size : task.downloaded;
   parts.push(task.size ? `${bytes(done)} / ${bytes(task.size)}` : bytes(done));
+  // m3u8: how many of its pieces are in, and roughly how long is left.
+  const hls = task.hls?.total && task.status !== 'completed' ? task.hls : null;
+  if (hls) parts.push(t('pieces', [`${hls.done}/${hls.total}`]));
   if (task.status === 'downloading') {
     parts.push(speed(task.speed));
     parts.push(task.connections === 1 ? t('oneConnection') : t('connections', [String(task.connections)]));
     if (task.size && task.speed > 0) parts.push(t('timeLeft', [duration((task.size - task.downloaded) / task.speed)]));
+    else if (hls?.done && task.speed > 0) {
+      const estimate = (task.downloaded / hls.done) * hls.total;
+      parts.push(t('timeLeft', [duration((estimate - task.downloaded) / task.speed)]));
+    }
   }
   card.querySelector('.meta').textContent = parts.join(' · ');
 
@@ -161,6 +168,10 @@ function drawBar(canvas, task) {
   if (task.status === 'completed') {
     ctx.fillStyle = css.getPropertyValue('--ok');
     ctx.fillRect(0, 0, w, h);
+    return;
+  }
+  if (task.hls?.total) {
+    ctx.fillRect(0, 0, (w * task.hls.done) / task.hls.total, h);
     return;
   }
   const size = task.size;

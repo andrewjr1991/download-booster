@@ -86,7 +86,7 @@ async function handle(msg) {
   }
 }
 
-async function add({ url, filename, takeover, maxConnections, source, referrer }) {
+async function add({ url, filename, takeover, maxConnections, source, referrer, kind, variant }) {
   const id = crypto.randomUUID();
   const t = {
     id,
@@ -108,6 +108,10 @@ async function add({ url, filename, takeover, maxConnections, source, referrer }
     maxConnections: maxConnections || 6,
     source: source || 'manual',
     referrer: referrer || null,
+    // 'hls': an m3u8 stream whose pieces are joined into one file (hls-worker.js).
+    kind: kind === 'hls' ? 'hls' : 'file',
+    variant: variant || null,
+    hls: null,
     createdAt: Date.now(),
     finishedAt: null,
     downloadId: null,
@@ -190,7 +194,8 @@ function pump() {
 
 async function startWorker(t) {
   workers.get(t.id)?.terminate();
-  const w = new Worker(new URL('./task-worker.js', import.meta.url), { type: 'module' });
+  const script = t.kind === 'hls' ? './hls-worker.js' : './task-worker.js';
+  const w = new Worker(new URL(script, import.meta.url), { type: 'module' });
   workers.set(t.id, w);
   t.status = 'downloading';
   t.error = null;
@@ -215,6 +220,8 @@ async function startWorker(t) {
       takeover: t.takeover || null,
       stats: t.stats,
       rate: rateShare(),
+      hls: t.hls,
+      variant: t.variant,
     },
   });
   if (!t.takeover) persist(t);
@@ -232,7 +239,14 @@ function endWorker(t) {
 }
 
 async function onWorkerMessage(t, m) {
+  if (m.hls) t.hls = m.hls;
   switch (m.type) {
+    case 'hosts':
+      // An HLS stream's pieces and keys can come from other hosts.
+      t.refererHosts = m.hosts;
+      await setRequestHeaders(t);
+      workers.get(t.id)?.postMessage({ type: 'hosts-ok' });
+      return;
     case 'meta':
       Object.assign(t, {
         size: m.meta.size,
@@ -333,6 +347,7 @@ async function setRequestHeaders(t) {
       type: 'request-headers',
       id: t.id,
       urls: [t.url, t.finalUrl],
+      domains: t.refererHosts || [],
       referrer: t.referrer,
     });
   } catch (err) {
@@ -424,6 +439,8 @@ function summaries() {
       createdAt: t.createdAt,
       finishedAt: t.finishedAt,
       downloadId: t.downloadId,
+      kind: t.kind,
+      hls: t.hls && { done: t.hls.done, total: t.hls.total, duration: t.hls.duration },
     }));
 }
 

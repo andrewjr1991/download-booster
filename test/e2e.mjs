@@ -405,6 +405,61 @@ await check('popup previews: hotlink-protected image full size, audio plays', as
   return `audio "${audioInfo}", image "${imageInfo}", selected from preview`;
 });
 
+await check('m3u8: pick a quality, encrypted pieces from another host are joined into one file', async () => {
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 4 });
+  const p = await ctx.newPage();
+  await p.goto(`${srv.url}/hlspage`);
+  await sleep(1500);
+  const tabId = await sw.evaluate(async (url) => (await chrome.tabs.query({ url }))[0].id, `${srv.url}/hlspage`);
+  const pop = await ctx.newPage();
+  await pop.setViewportSize({ width: 400, height: 520 });
+  await pop.goto(`chrome-extension://${extId}/src/popup.html?tab=${tabId}`);
+  await pop.waitForSelector('#kinds button[data-kind="stream"][aria-pressed="true"]');
+  await pop.click('#media-list li button.act');
+  await pop.waitForSelector('.qualities label');
+  const qualities = await pop.$$eval('.qualities label', (ls) => ls.map((l) => l.textContent));
+  await pop.waitForFunction(() => !document.querySelector('#pv-download').disabled);
+  const info = await pop.textContent('#pv-info');
+  await pop.screenshot({ path: path.join(EXT, 'test', 'hls-screenshot.png') });
+  const before = (await engine('list')).tasks.map((t) => t.id);
+  await pop.click('#pv-download');
+  await pop.waitForSelector('#view-tasks:not([hidden]) #task-list li');
+  const task = (await engine('list')).tasks.find((t) => !before.includes(t.id));
+  if (!task) throw new Error('nothing added');
+  const done = await waitTask(task.id, (t) => t.status === 'completed', 60000);
+  const { hash } = await savedFileHash(done.downloadId);
+  if (hash !== srv.hlsSha256) throw new Error('joined file differs from the original');
+  if (done.filename !== 'HLS demo.ts') throw new Error(`saved as ${done.filename}`);
+  const pieces = srv.log.filter((l) => /\/hls\/hi\/seg\d+\.ts$/.test(l.path));
+  if (pieces.some((l) => !l.referer)) throw new Error('a piece was requested without Referer');
+  await pop.close();
+  await p.close();
+  return `qualities ${JSON.stringify(qualities)}, "${info}", saved ${done.filename} (${done.size} bytes), ${pieces.length} piece requests`;
+});
+
+await check('m3u8: pause and resume continues from the pieces already joined', async () => {
+  await engine('set-limit', { maxActive: 3, speedLimit: 256 * 1024 });
+  const { id } = await engine('add', {
+    url: `${srv.url}/hls/master.m3u8`,
+    kind: 'hls',
+    filename: 'resume test',
+    referrer: `${srv.url}/hlspage`,
+    maxConnections: 2,
+  });
+  const mid = await waitTask(id, (t) => t.hls?.done >= 2, 30000);
+  await engine('pause', { id });
+  const paused = await waitTask(id, (t) => t.status === 'paused');
+  const mark = srv.log.length;
+  await engine('set-limit', { maxActive: 3, speedLimit: 0 });
+  await engine('resume', { id });
+  const done = await waitTask(id, (t) => t.status === 'completed', 60000);
+  const { hash } = await savedFileHash(done.downloadId);
+  if (hash !== srv.hlsSha256) throw new Error('joined file differs after resume');
+  const again = srv.log.slice(mark).filter((l) => /seg\d+\.ts$/.test(l.path)).length;
+  if (again >= 8) throw new Error(`fetched all ${again} pieces again`);
+  return `paused at ${paused.hls.done}/8 pieces, ${again} fetched after resume`;
+});
+
 await check('small files are left to the browser', async () => {
   await setSettings({ autoTakeover: true, minSizeMB: SIZE_MB + 1, maxConnections: 6 });
   const before = (await engine('list')).tasks.map((t) => t.id);

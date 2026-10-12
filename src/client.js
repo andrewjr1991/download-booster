@@ -72,6 +72,8 @@ export const ERRORS = {
   save: 'errSave',
   'range-unsupported': 'errRangeUnsupported',
   engine: 'errEngine',
+  live: 'errLive',
+  drm: 'errDrm',
 };
 
 export function statusText(task) {
