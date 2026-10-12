@@ -10,6 +10,10 @@ const workers = new Map(); // id -> Worker
 const pendingAdds = new Map(); // id -> resolve() for takeover probes
 const blobUrls = new Map(); // id -> object URL being saved
 
+// How many tasks download at once; the rest wait as 'queued'. Offscreen
+// documents cannot read chrome.storage, so the pages pass the setting in.
+let maxActive = Number(localStorage.getItem('maxActive')) || 3;
+
 const ready = init();
 
 async function init() {
@@ -20,10 +24,12 @@ async function init() {
     t.connections = 0;
   }
   for (const t of tasks.values()) {
-    // Tasks that were running when the browser closed resume on their own.
-    if (t.status === 'downloading' || t.status === 'queued') startWorker(t);
+    // Tasks that were running when the browser closed resume on their own,
+    // oldest first, as queue slots allow.
+    if (t.status === 'downloading') t.status = 'queued';
     else if (t.status === 'saving') save(t);
   }
+  pump();
   broadcast();
 }
 
@@ -43,14 +49,19 @@ async function handle(msg) {
     case 'list':
       return { tasks: summaries() };
     case 'add':
+      setLimit(msg.maxActive);
       return add(msg);
+    case 'set-limit':
+      setLimit(msg.maxActive);
+      return { ok: true };
     case 'pause':
       if (t && workers.has(t.id)) workers.get(t.id).postMessage({ type: 'pause' });
+      else if (t?.status === 'queued') setStatus(t, 'paused');
       return { ok: true };
     case 'resume':
       if (t && (t.status === 'paused' || t.status === 'error')) {
         if (!t.rangeSupported) t.segments = null; // no ranges: start over
-        startWorker(t);
+        enqueue(t);
       }
       return { ok: true };
     case 'cancel':
@@ -101,7 +112,7 @@ async function add({ url, filename, takeover, maxConnections, source, referrer }
 
   if (!takeover) {
     await db.put(t);
-    startWorker(t);
+    enqueue(t);
     return { accepted: true, id };
   }
 
@@ -117,10 +128,40 @@ async function add({ url, filename, takeover, maxConnections, source, referrer }
     clearRequestHeaders(t);
     await deleteOpfs(t);
   } else {
+    // The probe already started downloading; if that put us over the
+    // limit, park it in the queue (its progress is kept).
+    if (workers.size > maxActive && workers.has(id)) {
+      t.requeue = true;
+      workers.get(id).postMessage({ type: 'pause' });
+    }
     persist(t);
     broadcast();
   }
   return result;
+}
+
+function setLimit(n) {
+  n = Math.round(Number(n));
+  if (!Number.isFinite(n) || n < 1 || n === maxActive) return;
+  maxActive = Math.min(n, 10);
+  localStorage.setItem('maxActive', String(maxActive));
+  pump();
+}
+
+function enqueue(t) {
+  if (workers.size < maxActive) return startWorker(t);
+  setStatus(t, 'queued');
+}
+
+// Start queued tasks, oldest first, while there are free slots.
+function pump() {
+  const waiting = [...tasks.values()]
+    .filter((t) => t.status === 'queued' && !workers.has(t.id))
+    .sort((a, b) => a.createdAt - b.createdAt);
+  for (const t of waiting) {
+    if (workers.size >= maxActive) break;
+    startWorker(t);
+  }
 }
 
 async function startWorker(t) {
@@ -159,6 +200,8 @@ function endWorker(t) {
   workers.delete(t.id);
   t.speed = 0;
   t.connections = 0;
+  // A slot freed up; start the next task once this message is handled.
+  queueMicrotask(pump);
 }
 
 async function onWorkerMessage(t, m) {
@@ -204,7 +247,8 @@ async function onWorkerMessage(t, m) {
     case 'stopped':
       endWorker(t);
       Object.assign(t, { downloaded: m.downloaded, segments: m.segments, stats: m.stats || t.stats });
-      setStatus(t, 'paused');
+      setStatus(t, t.requeue ? 'queued' : 'paused');
+      delete t.requeue;
       break;
     case 'canceled':
       endWorker(t);
@@ -294,6 +338,7 @@ async function removeTask(t) {
   clearRequestHeaders(t);
   await db.delete(t.id);
   await deleteOpfs(t);
+  pump();
   broadcast();
 }
 
@@ -324,7 +369,7 @@ function setStatus(t, status, error = null) {
 
 function persist(t) {
   if (!tasks.has(t.id) || t.takeover) return;
-  const { speed, connections, ...record } = t;
+  const { speed, connections, requeue, ...record } = t;
   db.put(record).catch((err) => console.warn('persist failed', err));
 }
 

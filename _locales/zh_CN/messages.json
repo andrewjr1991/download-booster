@@ -39,7 +39,7 @@
     "message": "从 1 个连接开始，只有速度还在上升时才加连接。浏览器对同一站点最多 6 条连接（HTTP/1.1），HTTP/2 站点共用 1 条。"
   },
   "statusQueued": {
-    "message": "正在开始"
+    "message": "排队中"
   },
   "statusDownloading": {
     "message": "下载中"
@@ -121,5 +121,8 @@
   },
   "invalidUrl": {
     "message": "请输入 http 或 https 链接"
+  },
+  "maxActive": {
+    "message": "同时下载的任务数"
   }
 }

@@ -1,5 +1,5 @@
 const t = (key, subs) => chrome.i18n.getMessage(key, subs) || key;
-const DEFAULT_SETTINGS = { autoTakeover: true, minSizeMB: 20, maxConnections: 6 };
+const DEFAULT_SETTINGS = { autoTakeover: true, minSizeMB: 20, maxConnections: 6, maxActive: 3 };
 
 for (const el of document.querySelectorAll('[data-i18n]')) el.textContent = t(el.dataset.i18n);
 for (const el of document.querySelectorAll('[data-i18n-placeholder]')) el.placeholder = t(el.dataset.i18nPlaceholder);
@@ -207,7 +207,7 @@ $('#add').addEventListener('submit', async (e) => {
   msg.hidden = true;
   const { settings } = await chrome.storage.local.get('settings');
   const s = { ...DEFAULT_SETTINGS, ...settings };
-  await engine('add', { url, source: 'manual', maxConnections: s.maxConnections });
+  await engine('add', { url, source: 'manual', maxConnections: s.maxConnections, maxActive: s.maxActive });
   $('#url').value = '';
   refresh();
 });
@@ -225,19 +225,24 @@ async function loadSettings() {
   $('#autoTakeover').checked = s.autoTakeover;
   $('#minSizeMB').value = s.minSizeMB;
   $('#maxConnections').value = s.maxConnections;
+  $('#maxActive').value = s.maxActive;
 }
 
 async function saveSettings() {
   const clamp = (v, lo, hi, d) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, Math.round(v))) : d);
-  await chrome.storage.local.set({
-    settings: {
-      autoTakeover: $('#autoTakeover').checked,
-      minSizeMB: clamp(Number($('#minSizeMB').value), 1, 100000, DEFAULT_SETTINGS.minSizeMB),
-      maxConnections: clamp(Number($('#maxConnections').value), 1, 16, DEFAULT_SETTINGS.maxConnections),
-    },
-  });
+  const settings = {
+    autoTakeover: $('#autoTakeover').checked,
+    minSizeMB: clamp(Number($('#minSizeMB').value), 1, 100000, DEFAULT_SETTINGS.minSizeMB),
+    maxConnections: clamp(Number($('#maxConnections').value), 1, 16, DEFAULT_SETTINGS.maxConnections),
+    maxActive: clamp(Number($('#maxActive').value), 1, 10, DEFAULT_SETTINGS.maxActive),
+  };
+  await chrome.storage.local.set({ settings });
+  await engine('set-limit', { maxActive: settings.maxActive });
 }
-for (const id of ['autoTakeover', 'minSizeMB', 'maxConnections']) $('#' + id).addEventListener('change', saveSettings);
+for (const id of ['autoTakeover', 'minSizeMB', 'maxConnections', 'maxActive']) $('#' + id).addEventListener('change', saveSettings);
 
-loadSettings();
-refresh();
+loadSettings().then(async () => {
+  // Keep the engine's queue limit in step with the saved setting.
+  await engine('set-limit', { maxActive: Number($('#maxActive').value) });
+  refresh();
+});

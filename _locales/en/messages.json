@@ -39,7 +39,7 @@
     "message": "Starts with 1 connection and adds more only while the speed keeps rising. Browsers allow at most 6 connections per site (HTTP/1.1); HTTP/2 sites share one."
   },
   "statusQueued": {
-    "message": "Starting"
+    "message": "Queued"
   },
   "statusDownloading": {
     "message": "Downloading"
@@ -121,5 +121,8 @@
   },
   "invalidUrl": {
     "message": "Please enter an http or https link"
+  },
+  "maxActive": {
+    "message": "Downloads at the same time"
   }
 }

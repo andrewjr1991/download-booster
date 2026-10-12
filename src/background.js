@@ -2,7 +2,7 @@
 // all download work lives in the offscreen document (offscreen.js).
 
 const MB = 1024 * 1024;
-const DEFAULT_SETTINGS = { autoTakeover: true, minSizeMB: 20, maxConnections: 6 };
+const DEFAULT_SETTINGS = { autoTakeover: true, minSizeMB: 20, maxConnections: 6, maxActive: 3 };
 const MANAGER_URL = chrome.runtime.getURL('src/manager.html');
 
 async function getSettings() {
@@ -45,7 +45,15 @@ async function engine(cmd, args = {}) {
 
 async function addDownload({ url, filename, takeover, source, referrer }) {
   const s = await getSettings();
-  return engine('add', { url, filename, takeover, source, referrer, maxConnections: s.maxConnections });
+  return engine('add', {
+    url,
+    filename,
+    takeover,
+    source,
+    referrer,
+    maxConnections: s.maxConnections,
+    maxActive: s.maxActive,
+  });
 }
 
 // ---- entry points ----------------------------------------------------------
