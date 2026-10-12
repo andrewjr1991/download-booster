@@ -1,0 +1,125 @@
+{
+  "extName": {
+    "message": "下载加速器 – 多连接分段下载"
+  },
+  "extShortName": {
+    "message": "下载加速器"
+  },
+  "extDescription": {
+    "message": "用自适应多连接分段下载加速大文件，支持暂停与续传，无需安装其他软件。"
+  },
+  "actionTitle": {
+    "message": "打开下载管理"
+  },
+  "menuDownloadLink": {
+    "message": "用下载加速器下载"
+  },
+  "managerTitle": {
+    "message": "下载管理"
+  },
+  "addPlaceholder": {
+    "message": "粘贴下载链接（http 或 https）"
+  },
+  "addButton": {
+    "message": "下载"
+  },
+  "settings": {
+    "message": "设置"
+  },
+  "autoTakeover": {
+    "message": "自动接管浏览器下载"
+  },
+  "minSize": {
+    "message": "仅接管大于此大小的文件（MB）"
+  },
+  "maxConnections": {
+    "message": "每个任务最多连接数"
+  },
+  "settingsHint": {
+    "message": "从 1 个连接开始，只有速度还在上升时才加连接。浏览器对同一站点最多 6 条连接（HTTP/1.1），HTTP/2 站点共用 1 条。"
+  },
+  "statusQueued": {
+    "message": "正在开始"
+  },
+  "statusDownloading": {
+    "message": "下载中"
+  },
+  "statusPaused": {
+    "message": "已暂停"
+  },
+  "statusSaving": {
+    "message": "正在保存到下载目录"
+  },
+  "statusCompleted": {
+    "message": "已完成"
+  },
+  "statusError": {
+    "message": "失败"
+  },
+  "pause": {
+    "message": "暂停"
+  },
+  "resume": {
+    "message": "继续"
+  },
+  "retry": {
+    "message": "重试"
+  },
+  "cancel": {
+    "message": "取消"
+  },
+  "remove": {
+    "message": "移除"
+  },
+  "showInFolder": {
+    "message": "打开所在位置"
+  },
+  "clearFinished": {
+    "message": "清除已完成"
+  },
+  "empty": {
+    "message": "还没有下载任务。可以在上方粘贴链接、在链接上右键选择“用下载加速器下载”，或像平时一样下载大文件。"
+  },
+  "connections": {
+    "message": "$1 个连接"
+  },
+  "oneConnection": {
+    "message": "1 个连接"
+  },
+  "noRange": {
+    "message": "服务器不支持分段，使用单连接下载"
+  },
+  "speedCompare": {
+    "message": "单连接 $1 → 平均 $2（×$3）"
+  },
+  "avgSpeed": {
+    "message": "平均 $1"
+  },
+  "timeLeft": {
+    "message": "剩余 $1"
+  },
+  "errNetwork": {
+    "message": "网络错误"
+  },
+  "errHttp": {
+    "message": "服务器返回错误"
+  },
+  "errNoSpace": {
+    "message": "磁盘空间不足"
+  },
+  "errSave": {
+    "message": "保存文件失败"
+  },
+  "errRangeUnsupported": {
+    "message": "服务器上的文件已变化，请重新下载"
+  },
+  "errEngine": {
+    "message": "内部错误"
+  },
+  "added": {
+    "message": "已添加"
+  },
+  "invalidUrl": {
+    "message": "请输入 http 或 https 链接"
+  }
+}

@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title data-i18n="managerTitle">Downloads</title>
+    <link rel="icon" href="../icons/icon32.png" />
+    <link rel="stylesheet" href="manager.css" />
+  </head>
+  <body>
+    <header>
+      <img src="../icons/icon48.png" alt="" width="28" height="28" />
+      <h1 data-i18n="managerTitle">Downloads</h1>
+      <button id="clear" class="ghost" data-i18n="clearFinished">Clear completed</button>
+    </header>
+
+    <main>
+      <form id="add">
+        <input id="url" type="url" required data-i18n-placeholder="addPlaceholder" autocomplete="off" />
+        <button type="submit" class="primary" data-i18n="addButton">Download</button>
+      </form>
+      <p id="add-msg" class="hint" hidden></p>
+
+      <section id="tasks" aria-live="polite"></section>
+      <p id="empty" class="empty" data-i18n="empty" hidden></p>
+
+      <details id="settings">
+        <summary data-i18n="settings">Settings</summary>
+        <label class="row">
+          <input type="checkbox" id="autoTakeover" />
+          <span data-i18n="autoTakeover"></span>
+        </label>
+        <label class="row">
+          <span data-i18n="minSize"></span>
+          <input type="number" id="minSizeMB" min="1" max="100000" />
+        </label>
+        <label class="row">
+          <span data-i18n="maxConnections"></span>
+          <input type="number" id="maxConnections" min="1" max="16" />
+        </label>
+        <p class="hint" data-i18n="settingsHint"></p>
+      </details>
+    </main>
+
+    <template id="task-tpl">
+      <article class="task">
+        <div class="top">
+          <span class="name"></span>
+          <span class="status"></span>
+        </div>
+        <canvas class="bar" height="10"></canvas>
+        <div class="meta"></div>
+        <div class="compare hint"></div>
+        <div class="actions"></div>
+      </article>
+    </template>
+
+    <script type="module" src="manager.js"></script>
+  </body>
+</html>
