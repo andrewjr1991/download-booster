@@ -354,13 +354,37 @@ async function importFile({ opfsName, size, filename, referrer }) {
   return { id };
 }
 
+const TYPES = {
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  m4a: 'audio/mp4',
+  webm: 'video/webm',
+  ts: 'video/mp2t',
+  mkv: 'video/x-matroska',
+  mov: 'video/quicktime',
+  mp3: 'audio/mpeg',
+  aac: 'audio/aac',
+  flac: 'audio/flac',
+  ogg: 'audio/ogg',
+  wav: 'audio/wav',
+};
+
+// The saved file's type from its name; anything else is plain binary, which
+// Chrome leaves under the name it was given.
+function typeFor(filename) {
+  const ext = /\.([a-z0-9]+)$/i.exec(filename || '')?.[1]?.toLowerCase();
+  return TYPES[ext] || 'application/octet-stream';
+}
+
 // Hand the finished OPFS file to chrome.downloads (via the background, since
 // offscreen documents only get chrome.runtime).
 async function save(t) {
   setStatus(t, 'saving');
   try {
     const file = await getOpfsFile(t);
-    const url = URL.createObjectURL(file);
+    // OPFS files have no type, and Chrome then treats the blob as text/plain:
+    // on Windows that renames "video.mp4" to "video.txt". Give it a real one.
+    const url = URL.createObjectURL(file.slice(0, file.size, typeFor(t.filename)));
     blobUrls.set(t.id, url);
     const res = await chrome.runtime.sendMessage({
       type: 'save-file',

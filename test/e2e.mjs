@@ -430,8 +430,9 @@ await check('m3u8: pick a quality, encrypted pieces from another host are joined
   const task = (await engine('list')).tasks.find((t) => !before.includes(t.id));
   if (!task) throw new Error('nothing added');
   const done = await waitTask(task.id, (t) => t.status === 'completed', 60000);
-  const { hash } = await savedFileHash(done.downloadId);
+  const { hash, item } = await savedFileHash(done.downloadId);
   if (hash !== srv.hlsSha256) throw new Error('joined file differs from the original');
+  if (item.mime !== 'video/mp2t') throw new Error(`saved as type ${item.mime}`);
   if (done.filename !== 'HLS demo.ts') throw new Error(`saved as ${done.filename}`);
   const pieces = srv.log.filter((l) => /\/hls\/hi\/seg\d+\.ts$/.test(l.path));
   if (pieces.some((l) => !l.referer)) throw new Error('a piece was requested without Referer');
@@ -497,8 +498,10 @@ async function recordFrom(url, stop) {
 
 await check('recording a blob: video joins the player’s separate video and audio into one mp4', async () => {
   const done = await recordFrom(`${srv.url}/msepage`, false);
-  const { hash } = await savedFileHash(done.downloadId);
+  const { hash, item } = await savedFileHash(done.downloadId);
   if (hash !== srv.mseSha256) throw new Error('recorded file differs from the joined original');
+  // Without a type Chrome calls it text/plain and Windows renames it .txt.
+  if (item.mime !== 'video/mp4') throw new Error(`saved as type ${item.mime}`);
   if (done.filename !== 'MSE demo.mp4') throw new Error(`saved as ${done.filename}`);
   return `finished on its own when the player ended the stream, saved ${done.filename} (${done.size} bytes), identical to the expected join`;
 });
