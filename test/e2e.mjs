@@ -360,7 +360,7 @@ await check('popup lists the video, images and playlist a page loaded, and downl
   await pop.screenshot({ path: path.join(EXT, 'test', 'popup-screenshot.png') });
   await pop.click('#kinds button[data-kind="video"]');
   const before = (await engine('list')).tasks.map((t) => t.id);
-  await pop.click('#media-list li button.icon');
+  await pop.click('#media-list li button.act');
   await pop.waitForSelector('#view-tasks:not([hidden]) #task-list li');
   await p.close();
   const task = (await engine('list')).tasks.find((t) => !before.includes(t.id));
@@ -370,6 +370,39 @@ await check('popup lists the video, images and playlist a page loaded, and downl
   if (hash !== srv.sha256) throw new Error('hash mismatch');
   await pop.close();
   return `badge "${badge}", chips ${chips.join(' ')}, icon and .ts piece hidden, video saved as ${done.filename}`;
+});
+
+await check('popup previews: hotlink-protected image full size, audio plays', async () => {
+  const p = await ctx.newPage();
+  await p.goto(`${srv.url}/media2`);
+  await sleep(1500);
+  const tabId = await sw.evaluate(async (url) => (await chrome.tabs.query({ url }))[0].id, `${srv.url}/media2`);
+  const pop = await ctx.newPage();
+  await pop.setViewportSize({ width: 400, height: 520 });
+  await pop.goto(`chrome-extension://${extId}/src/popup.html?tab=${tabId}`);
+  await pop.waitForSelector('#kinds button[data-kind="audio"]');
+  // Audio: plays in the popup and reports its length.
+  await pop.click('#kinds button[data-kind="audio"]');
+  await pop.click('#media-list li .info');
+  await pop.waitForFunction(() => document.querySelector('#pv-stage audio')?.readyState >= 1, null, { timeout: 10000 });
+  const audioInfo = await pop.textContent('#pv-info');
+  if (!audioInfo.startsWith('0:01')) throw new Error(`audio info "${audioInfo}"`);
+  await pop.click('#pv-close');
+  // Image: the thumbnail and the preview load despite hotlink protection.
+  await pop.click('#kinds button[data-kind="image"]');
+  await pop.waitForFunction(() => document.querySelector('#media-list li.tile img')?.naturalWidth > 0, null, { timeout: 10000 });
+  await pop.click('#media-list li.tile');
+  await pop.waitForFunction(() => document.querySelector('#pv-stage img')?.naturalWidth === 200, null, { timeout: 10000 });
+  const imageInfo = await pop.textContent('#pv-info');
+  await pop.screenshot({ path: path.join(EXT, 'test', 'preview-screenshot.png') });
+  // Select from the preview, then the bulk button counts it.
+  await pop.click('#pv-select');
+  await pop.click('#pv-close');
+  const go = await pop.textContent('#media-go');
+  if (!go.includes('1')) throw new Error(`bulk button "${go}"`);
+  await pop.close();
+  await p.close();
+  return `audio "${audioInfo}", image "${imageInfo}", selected from preview`;
 });
 
 await check('small files are left to the browser', async () => {

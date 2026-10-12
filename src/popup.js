@@ -2,7 +2,7 @@
 // recent downloads, and shortcuts to the manager and the link sniffer.
 
 import { ICONS } from './icons.js';
-import { t, localize, engine, addUrls, bytes, speed, statusText } from './client.js';
+import { t, localize, engine, addUrls, bytes, speed, duration, statusText } from './client.js';
 
 localize();
 const $ = (sel) => document.querySelector(sel);
@@ -69,6 +69,12 @@ function shown() {
   return sortMedia(state.media.filter((m) => m.kind === state.kind));
 }
 
+// "MP3" from the file name, else from the type ("MPEG" is less helpful).
+function extLabel(m) {
+  const fromName = /\.([a-z0-9]{2,5})$/i.exec(m.name);
+  return (fromName ? fromName[1] : (m.mime.split('/')[1] || '').replace(/^x-/, '')).toUpperCase();
+}
+
 function host(url) {
   try {
     return new URL(url).host;
@@ -97,7 +103,6 @@ function mediaRow(m) {
     thumb = document.createElement('img');
     thumb.className = 'thumb';
     thumb.loading = 'lazy';
-    thumb.referrerPolicy = 'no-referrer';
     thumb.src = m.url;
     thumb.alt = '';
   } else {
@@ -115,12 +120,23 @@ function mediaRow(m) {
   name.title = m.url;
   const sub = document.createElement('span');
   sub.className = 'sub';
-  const ext = (m.mime.split('/')[1] || '').replace(/^x-/, '').toUpperCase();
+  const ext = extLabel(m);
   sub.textContent = stream ? t('streamHint') : [m.size ? bytes(m.size) : null, ext || null, host(m.url)].filter(Boolean).join(' · ');
   info.append(name, sub);
+  if (!stream) {
+    info.classList.add('clickable');
+    info.onclick = () => openPreview(m);
+  }
+
+  const play = document.createElement('button');
+  play.className = 'icon';
+  play.innerHTML = ICONS.play;
+  play.title = t('preview');
+  play.onclick = () => openPreview(m);
+  play.hidden = stream;
 
   const act = document.createElement('button');
-  act.className = 'icon';
+  act.className = 'icon act';
   if (stream) {
     act.innerHTML = ICONS.copy;
     act.title = t('copyLink');
@@ -133,7 +149,7 @@ function mediaRow(m) {
     act.title = t('addButton');
     act.onclick = () => download([m]);
   }
-  li.append(box, thumb, info, act);
+  li.append(box, thumb, info, play, act);
   return li;
 }
 
@@ -146,7 +162,6 @@ function imageTile(m) {
   li.setAttribute('aria-selected', String(state.selected.has(m.key)));
   const img = document.createElement('img');
   img.loading = 'lazy';
-  img.referrerPolicy = 'no-referrer';
   img.src = m.url;
   img.alt = m.name;
   const tick = document.createElement('span');
@@ -159,12 +174,13 @@ function imageTile(m) {
     if (img.naturalWidth) cap.textContent = `${img.naturalWidth}×${img.naturalHeight}${m.size ? ` · ${bytes(m.size)}` : ''}`;
   };
   li.append(img, tick, cap);
-  li.onclick = () => {
-    if (state.selected.has(m.key)) state.selected.delete(m.key);
-    else state.selected.add(m.key);
+  // The tick selects; anywhere else opens the preview.
+  tick.onclick = (e) => {
+    e.stopPropagation();
+    toggle(m);
     li.setAttribute('aria-selected', String(state.selected.has(m.key)));
-    updateBulk();
   };
+  li.onclick = () => openPreview(m);
   return li;
 }
 
@@ -179,6 +195,111 @@ function renderMedia() {
   $('#media-bulk').hidden = !list.length || state.kind === 'stream';
   updateBulk();
 }
+
+function toggle(m) {
+  if (state.selected.has(m.key)) state.selected.delete(m.key);
+  else state.selected.add(m.key);
+  updateBulk();
+}
+
+// ---- preview -----------------------------------------------------------------------
+// A closer look before downloading: the image full size, or the audio/video
+// playing. The extension fetches it, so it gets the page's Referer the same
+// way downloads do (see setRequestHeaders in background.js).
+
+let current = null;
+
+function openPreview(m) {
+  current = m;
+  const stage = $('#pv-stage');
+  stage.querySelector('video, audio')?.pause();
+  let el;
+  const info = [m.size ? bytes(m.size) : null, extLabel(m)].filter(Boolean);
+  const showInfo = (extra = []) => ($('#pv-info').textContent = [...extra, ...info].join(' · '));
+  if (m.kind === 'image') {
+    el = document.createElement('img');
+    el.onload = () => showInfo([`${el.naturalWidth}×${el.naturalHeight}`]);
+  } else {
+    el = document.createElement(m.kind === 'audio' ? 'audio' : 'video');
+    el.controls = true;
+    el.autoplay = true;
+    el.preload = 'metadata';
+    el.onloadedmetadata = () =>
+      showInfo([
+        isFinite(el.duration) ? duration(el.duration) : null,
+        el.videoWidth ? `${el.videoWidth}×${el.videoHeight}` : null,
+      ].filter(Boolean));
+  }
+  el.onerror = () => ($('#pv-info').textContent = t('previewFailed'));
+  el.src = m.url;
+  if (m.kind === 'audio') {
+    const art = document.createElement('span');
+    art.className = 'ftype pv-art';
+    art.dataset.kind = 'audio';
+    art.innerHTML = ICONS.audio;
+    stage.replaceChildren(art, el);
+  } else stage.replaceChildren(el);
+  stage.dataset.kind = m.kind;
+  $('#pv-name').textContent = m.name;
+  $('#pv-name').title = m.url;
+  showInfo();
+  const list = shown().filter((x) => x.kind !== 'stream');
+  const i = list.findIndex((x) => x.key === m.key);
+  $('#pv-prev').disabled = i <= 0;
+  $('#pv-next').disabled = i < 0 || i >= list.length - 1;
+  updatePreviewSelect();
+  document.body.classList.add('previewing');
+  $('#preview').hidden = false;
+}
+
+function step(delta) {
+  const list = shown().filter((x) => x.kind !== 'stream');
+  const i = list.findIndex((x) => x.key === current?.key);
+  if (list[i + delta]) openPreview(list[i + delta]);
+}
+
+function closePreview() {
+  $('#pv-stage').querySelector('video, audio')?.pause();
+  $('#pv-stage').replaceChildren();
+  $('#preview').hidden = true;
+  document.body.classList.remove('previewing');
+  current = null;
+  renderMedia();
+}
+
+function updatePreviewSelect() {
+  const on = current && state.selected.has(current.key);
+  $('#pv-select').replaceChildren();
+  if (on) $('#pv-select').innerHTML = ICONS.check;
+  $('#pv-select').append(t(on ? 'selected' : 'select'));
+  $('#pv-select').setAttribute('aria-pressed', String(!!on));
+}
+
+$('#pv-prev').innerHTML = ICONS.prev;
+$('#pv-next').innerHTML = ICONS.next;
+$('#pv-close').innerHTML = ICONS.close;
+$('#pv-download').innerHTML = ICONS.download;
+$('#pv-download').append(t('addButton'));
+$('#pv-prev').onclick = () => step(-1);
+$('#pv-next').onclick = () => step(1);
+$('#pv-close').onclick = closePreview;
+$('#pv-select').onclick = () => {
+  toggle(current);
+  updatePreviewSelect();
+};
+$('#pv-download').onclick = () => {
+  const m = current;
+  closePreview();
+  download([m]);
+};
+document.addEventListener('keydown', (e) => {
+  if ($('#preview').hidden) return;
+  if (e.key === 'Escape') {
+    e.preventDefault(); // keep the popup open
+    closePreview();
+  } else if (e.key === 'ArrowLeft') step(-1);
+  else if (e.key === 'ArrowRight') step(1);
+});
 
 function selectedMedia() {
   return shown().filter((m) => state.selected.has(m.key) && m.kind !== 'stream');
@@ -311,6 +432,17 @@ $('#sniff-links').onclick = async () => {
 
 // ---- start -------------------------------------------------------------------------
 
+// Thumbnails and previews load from the extension; give them the page's
+// Referer so sites that block hotlinking still show them.
+let refererFor = '';
+async function allowPageReferer() {
+  const urls = state.media.map((m) => m.url);
+  const key = urls.join('\n');
+  if (!state.tab?.url || key === refererFor) return;
+  refererFor = key;
+  await chrome.runtime.sendMessage({ type: 'request-headers', id: 'popup', urls, referrer: state.tab.url, pages: true }).catch(() => {});
+}
+
 async function init() {
   // ?tab=<id> lets tests open the popup as a page for a given tab.
   const forced = Number(new URLSearchParams(location.search).get('tab'));
@@ -319,6 +451,7 @@ async function init() {
     : await chrome.tabs.query({ active: true, currentWindow: true });
   const res = state.tab ? await chrome.runtime.sendMessage({ type: 'media-list', tabId: state.tab.id }) : null;
   state.media = res?.media || [];
+  await allowPageReferer();
   renderMedia();
   await refreshTasks();
   // Nothing found on this page but downloads are running: show those.
@@ -332,5 +465,7 @@ chrome.storage.session.onChanged.addListener((changes) => {
   const change = state.tab && changes[`media:${state.tab.id}`];
   if (!change) return;
   state.media = change.newValue || [];
-  renderMedia();
+  allowPageReferer().then(() => {
+    if ($('#preview').hidden) renderMedia();
+  });
 });

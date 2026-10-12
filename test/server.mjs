@@ -11,6 +11,8 @@
 //   /media          a page playing /clip.mp4 (the same bytes as video/mp4), showing
 //                   /photo.jpg (50 KB) and /icon.png (2 KB), and fetching
 //                   /live.m3u8 and one of its /seg1.ts pieces
+//   /media2         a page with a playable /tone.wav (1 s) and /pic.bmp (200×150),
+//                   which is 403 unless the Referer is /media2
 // Add ?ttfb=1500 to delay every response by that many ms (a far-away CDN).
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -21,6 +23,8 @@ export function startServer({ port = 8787, sizeMB = 40, rateKBps = 2048 } = {}) 
   const sha256 = crypto.createHash('sha256').update(data).digest('hex');
   const etag = `"${sha256.slice(0, 16)}"`;
   const rate = rateKBps * 1024;
+  const tone = wav(1, 440);
+  const bmp = bitmap(200, 150);
   let requests = 0;
   const log = [];
 
@@ -62,6 +66,25 @@ export function startServer({ port = 8787, sizeMB = 40, rateKBps = 2048 } = {}) 
           '<img src="/photo.jpg"><img src="/icon.png">' +
           "<script>fetch('/live.m3u8');fetch('/seg1.ts')</script>",
       );
+      return;
+    }
+    if (path === '/media2') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<title>media2</title><audio src="/tone.wav" preload="auto"></audio><img src="/pic.bmp">');
+      return;
+    }
+    if (path === '/tone.wav') {
+      res.writeHead(200, { 'Content-Type': 'audio/wav', 'Content-Length': tone.length, 'Accept-Ranges': 'bytes' });
+      res.end(tone);
+      return;
+    }
+    if (path === '/pic.bmp') {
+      if (!(req.headers.referer || '').startsWith(`http://127.0.0.1:${port}/media2`)) {
+        res.writeHead(403).end();
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'image/bmp', 'Content-Length': bmp.length });
+      res.end(bmp);
       return;
     }
     const small = { '/photo.jpg': ['image/jpeg', 50 * 1024], '/icon.png': ['image/png', 2048], '/seg1.ts': ['video/mp2t', 4096] }[path];
@@ -128,6 +151,49 @@ export function startServer({ port = 8787, sizeMB = 40, rateKBps = 2048 } = {}) 
   return new Promise((resolve) => {
     server.listen(port, '127.0.0.1', () => resolve({ server, size, sha256, log, url: `http://127.0.0.1:${port}` }));
   });
+}
+
+// 16-bit mono PCM sine wave.
+function wav(seconds, hz, rate = 44100) {
+  const n = seconds * rate;
+  const b = Buffer.alloc(44 + n * 2);
+  b.write('RIFF', 0);
+  b.writeUInt32LE(36 + n * 2, 4);
+  b.write('WAVEfmt ', 8);
+  b.writeUInt32LE(16, 16);
+  b.writeUInt16LE(1, 20);
+  b.writeUInt16LE(1, 22);
+  b.writeUInt32LE(rate, 24);
+  b.writeUInt32LE(rate * 2, 28);
+  b.writeUInt16LE(2, 32);
+  b.writeUInt16LE(16, 34);
+  b.write('data', 36);
+  b.writeUInt32LE(n * 2, 40);
+  for (let i = 0; i < n; i++) b.writeInt16LE(Math.round(Math.sin((2 * Math.PI * hz * i) / rate) * 8000), 44 + i * 2);
+  return b;
+}
+
+// 24-bit BMP with a colour gradient.
+function bitmap(w, h) {
+  const row = Math.ceil((w * 3) / 4) * 4;
+  const b = Buffer.alloc(54 + row * h);
+  b.write('BM', 0);
+  b.writeUInt32LE(b.length, 2);
+  b.writeUInt32LE(54, 10);
+  b.writeUInt32LE(40, 14);
+  b.writeInt32LE(w, 18);
+  b.writeInt32LE(h, 22);
+  b.writeUInt16LE(1, 26);
+  b.writeUInt16LE(24, 28);
+  b.writeUInt32LE(row * h, 34);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const o = 54 + y * row + x * 3;
+      b[o] = (x * 255) / w;
+      b[o + 1] = (y * 255) / h;
+      b[o + 2] = 160;
+    }
+  return b;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

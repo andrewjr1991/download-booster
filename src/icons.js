@@ -24,6 +24,8 @@ export const ICONS = {
   copy: wrap('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>'),
   search: wrap('<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>'),
   link: wrap('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>'),
+  prev: wrap('<path d="m15 5-7 7 7 7"/>'),
+  next: wrap('<path d="m9 5 7 7-7 7"/>'),
   check: wrap('<path d="m5 12 5 5 9-10"/>'),
 };
 
