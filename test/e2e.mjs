@@ -722,6 +722,86 @@ await check('DASH with one file per track: pieces read from its sidx index', asy
   return `saved ${done.filename}, ${done.hls.total} pieces from the index, ${ranged} range requests`;
 });
 
+// A picked download folder. The real one comes from a folder picker, which
+// a headless browser can't show; a folder in the extension's own storage is
+// the same kind of handle and is always writable.
+const pickFolder = (on) =>
+  page.evaluate(async (on) => {
+    const { setFolder } = await import('./folder.js');
+    if (!on) return setFolder(null);
+    const root = await navigator.storage.getDirectory();
+    await root.removeEntry('picked', { recursive: true }).catch(() => {});
+    await setFolder(await root.getDirectoryHandle('picked', { create: true }));
+  }, on);
+const folderFiles = () =>
+  page.evaluate(async () => {
+    const root = await navigator.storage.getDirectory();
+    const out = {};
+    for (const name of ['picked', 'downloads']) {
+      const dir = await root.getDirectoryHandle(name, { create: true });
+      for await (const [n, h] of dir.entries()) {
+        const f = await h.getFile();
+        const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', await f.arrayBuffer()))].map((b) => b.toString(16).padStart(2, '0')).join('');
+        out[`${name}/${n}`] = { size: f.size, hash };
+      }
+    }
+    return out;
+  });
+
+await check('download folder: a file is written straight into the picked folder', async () => {
+  await pickFolder(true);
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6 });
+  await engine('set-limit', { maxActive: 3, speedLimit: 0 });
+  const { id } = await engine('add', { url: `${srv.url}/file.bin`, maxConnections: 6 });
+  await waitTask(id, (t) => t.downloaded > srv.size * 0.3);
+  const during = Object.keys(await folderFiles());
+  if (!during.includes('picked/test-40MB.bin.part')) throw new Error(`while downloading: ${during}`);
+  if (during.some((n) => n.startsWith('downloads/'))) throw new Error(`also in the browser's storage: ${during}`);
+  const done = await waitTask(id, (t) => t.status === 'completed');
+  const files = await folderFiles();
+  if (files['picked/test-40MB.bin']?.hash !== srv.sha256) throw new Error(`saved: ${JSON.stringify(Object.keys(files))}`);
+  if (Object.keys(files).length !== 1) throw new Error(`left over: ${Object.keys(files)}`);
+  if (done.savedTo !== 'picked/test-40MB.bin' || done.downloadId != null) throw new Error(`savedTo ${done.savedTo}, downloadId ${done.downloadId}`);
+  return `written as test-40MB.bin.part while downloading, nothing in the browser's storage, saved ${done.savedTo}`;
+});
+
+await check('download folder: pausing keeps the progress in the .part file, a second copy gets a new name', async () => {
+  const { id } = await engine('add', { url: `${srv.url}/file.bin`, maxConnections: 6 });
+  await waitTask(id, (t) => t.downloaded > srv.size * 0.3);
+  await engine('pause', { id });
+  const paused = await waitTask(id, (t) => t.status === 'paused');
+  const part = (await folderFiles())['picked/test-40MB (1).bin.part'];
+  if (!part || part.size !== srv.size) throw new Error(`no committed .part after pausing: ${JSON.stringify(await folderFiles())}`);
+  const before = srv.log.length;
+  await engine('resume', { id });
+  const done = await waitTask(id, (t) => t.status === 'completed');
+  const fromStart = srv.log.slice(before).filter((l) => /^bytes=0-(?!0$)/.test(l.range || '')).length;
+  if (fromStart) throw new Error('started again from the beginning');
+  const files = await folderFiles();
+  if (done.savedTo !== 'picked/test-40MB (1).bin' || files['picked/test-40MB (1).bin']?.hash !== srv.sha256) throw new Error(`saved ${done.savedTo}: ${JSON.stringify(Object.keys(files))}`);
+  return `paused at ${((paused.downloaded / srv.size) * 100).toFixed(0)}%, resumed from there, saved ${done.savedTo}`;
+});
+
+await check('download folder: removing an unfinished download deletes its .part file', async () => {
+  const { id } = await engine('add', { url: `${srv.url}/file.bin`, maxConnections: 6 });
+  await waitTask(id, (t) => t.downloaded > srv.size * 0.1);
+  await engine('remove', { id });
+  await sleep(1500);
+  const left = Object.keys(await folderFiles()).filter((n) => n.endsWith('.part'));
+  if (left.length) throw new Error(`left behind: ${left}`);
+  return 'no .part file left';
+});
+
+await check('download folder: a joined m3u8 is saved into the folder too', async () => {
+  const { id } = await engine('add', { url: `${srv.url}/hlsav/master.m3u8`, kind: 'hls', filename: 'AV folder', maxConnections: 4 });
+  const done = await waitTask(id, (t) => t.status === 'completed', 60000);
+  const files = await folderFiles();
+  await pickFolder(false);
+  if (done.savedTo !== 'picked/AV folder.mp4' || files['picked/AV folder.mp4']?.hash !== srv.mseSha256) throw new Error(`saved ${done.savedTo}: ${JSON.stringify(Object.keys(files))}`);
+  if (Object.keys(files).some((n) => n.startsWith('downloads/'))) throw new Error('left in the browser storage');
+  return `saved ${done.savedTo}, identical to the expected join`;
+});
+
 await check('small files are left to the browser', async () => {
   await setSettings({ autoTakeover: true, minSizeMB: SIZE_MB + 1, maxConnections: 6 });
   const before = (await engine('list')).tasks.map((t) => t.id);

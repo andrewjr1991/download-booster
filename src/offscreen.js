@@ -1,9 +1,11 @@
 // The download engine host. Lives in the offscreen document, which (unlike the
 // MV3 service worker) is not killed when idle. It keeps the task list, starts
 // one worker per active task, persists progress to IndexedDB and hands
-// finished files to the background for chrome.downloads to save.
+// finished files to the background for chrome.downloads to save, or, when
+// the user picked a download folder, has them written straight into it.
 
 import { db } from './db.js';
+import { getFolder, folderPermission, uniqueName, copyInto } from './folder.js';
 
 const tasks = new Map(); // id -> task record
 const workers = new Map(); // id -> Worker
@@ -90,8 +92,15 @@ async function handle(msg) {
   }
 }
 
+// The download folder, if one is picked and may be written to now.
+async function usableFolder() {
+  const dir = await getFolder().catch(() => null);
+  return dir && (await folderPermission(dir)) === 'granted' ? dir : null;
+}
+
 async function add({ url, filename, takeover, maxConnections, source, referrer, kind, variant, rename }) {
   const id = crypto.randomUUID();
+  const folder = await usableFolder();
   const t = {
     id,
     url,
@@ -118,6 +127,12 @@ async function add({ url, filename, takeover, maxConnections, source, referrer, 
     // Batch rename rule, applied once the server's file name is known.
     rename: rename?.pattern ? rename : null,
     hls: null,
+    // The picked folder (a directory handle) the file goes into, its
+    // "<name>.part" while downloading, and the progress last committed there.
+    folder,
+    folderPart: null,
+    folderSegments: null,
+    savedTo: null,
     createdAt: Date.now(),
     finishedAt: null,
     downloadId: null,
@@ -200,6 +215,7 @@ function pump() {
 
 async function startWorker(t) {
   workers.get(t.id)?.terminate();
+  const direct = t.folder && t.kind === 'file';
   const script = t.kind === 'hls' ? './hls-worker.js' : './task-worker.js';
   const w = new Worker(new URL(script, import.meta.url), { type: 'module' });
   workers.set(t.id, w);
@@ -208,6 +224,12 @@ async function startWorker(t) {
   w.onmessage = (e) => onWorkerMessage(t, e.data);
   w.onerror = (e) => onWorkerMessage(t, { type: 'error', code: 'engine', message: e.message });
   shareSpeedLimit();
+  // A file going into the folder can only continue there.
+  if (direct && (await folderPermission(t.folder)) !== 'granted') {
+    endWorker(t);
+    setStatus(t, 'error', { code: 'folder', message: 'No permission for the download folder' });
+    return;
+  }
   await setRequestHeaders(t);
   if (workers.get(t.id) !== w) return; // paused or removed meanwhile
   w.postMessage({
@@ -221,7 +243,9 @@ async function startWorker(t) {
       rangeSupported: t.rangeSupported,
       etag: t.etag,
       lastModified: t.lastModified,
-      segments: t.segments,
+      // In the folder, only what was committed (on the last pause) is there.
+      segments: direct ? t.folderSegments : t.segments,
+      folder: direct ? { dir: t.folder, part: t.folderPart } : null,
       maxConnections: t.maxConnections,
       takeover: t.takeover || null,
       stats: t.stats,
@@ -265,6 +289,7 @@ async function onWorkerMessage(t, m) {
         finalUrl: m.meta.finalUrl,
         segments: m.segments,
       });
+      if (m.meta.part) t.folderPart = m.meta.part;
       if (t.finalUrl !== t.url) setRequestHeaders(t);
       if (pendingAdds.has(t.id)) {
         pendingAdds.get(t.id)({ accepted: true, id: t.id, filename: t.filename });
@@ -279,6 +304,7 @@ async function onWorkerMessage(t, m) {
       return;
     case 'restarted':
       t.segments = null;
+      t.folderSegments = null;
       t.etag = t.lastModified = null;
       break;
     case 'progress':
@@ -297,6 +323,7 @@ async function onWorkerMessage(t, m) {
     case 'stopped':
       endWorker(t);
       Object.assign(t, { downloaded: m.downloaded, segments: m.segments, stats: m.stats || t.stats });
+      if (t.folderPart) t.folderSegments = m.segments;
       setStatus(t, t.requeue ? 'queued' : 'paused');
       delete t.requeue;
       break;
@@ -311,6 +338,7 @@ async function onWorkerMessage(t, m) {
         return;
       }
       if (m.segments?.length) t.segments = m.segments;
+      if (t.folderPart && m.segments?.length) t.folderSegments = m.segments;
       setStatus(t, 'error', { code: m.code, message: m.message });
       break;
     case 'extra':
@@ -324,7 +352,12 @@ async function onWorkerMessage(t, m) {
       endWorker(t);
       Object.assign(t, { size: m.size, downloaded: m.size, segments: m.segments, stats: m.stats });
       t.finishedAt = Date.now();
-      await save(t);
+      if (m.savedAs) {
+        // Written straight into the folder: nothing left to save.
+        Object.assign(t, { filename: m.savedAs, savedTo: `${t.folder.name}/${m.savedAs}`, folderPart: null, folderSegments: null, segments: null });
+        clearRequestHeaders(t);
+        setStatus(t, 'completed');
+      } else await save(t);
       break;
   }
   broadcast();
@@ -354,6 +387,7 @@ async function importFile({ opfsName, size, filename, referrer }) {
     referrer: null,
     kind: 'record',
     hls: null,
+    folder: await usableFolder(),
     createdAt: now,
     finishedAt: now,
     downloadId: null,
@@ -392,6 +426,14 @@ async function save(t) {
   setStatus(t, 'saving');
   try {
     const file = await getOpfsFile(t);
+    // A download folder is set: copy it there (HLS streams and recordings
+    // are put together in the browser's storage first).
+    if (t.folder && (await folderPermission(t.folder)) === 'granted') {
+      const name = await uniqueName(t.folder, t.filename || 'download');
+      await copyInto(t.folder, name, file);
+      Object.assign(t, { filename: name, savedTo: `${t.folder.name}/${name}` });
+      return onSaved(t, null);
+    }
     // OPFS files have no type, and Chrome then treats the blob as text/plain:
     // on Windows that renames "video.mp4" to "video.txt". Give it a real one.
     const url = URL.createObjectURL(file.slice(0, file.size, typeFor(t.filename)));
@@ -454,6 +496,19 @@ async function removeTask(t) {
   clearRequestHeaders(t);
   await db.delete(t.id);
   await deleteOpfs(t);
+  // An unfinished file in the download folder goes too.
+  if (t.folder && t.folderPart && t.status !== 'completed') {
+    for (let i = 0; i < 5; i++) {
+      try {
+        await t.folder.removeEntry(t.folderPart);
+        break;
+      } catch (err) {
+        if (err?.name === 'NotFoundError') break;
+        console.warn('removing the .part file', err?.name, err?.message);
+        await new Promise((r) => setTimeout(r, 300)); // still being closed
+      }
+    }
+  }
   pump();
   broadcast();
 }
@@ -517,6 +572,7 @@ function summaries() {
       createdAt: t.createdAt,
       finishedAt: t.finishedAt,
       downloadId: t.downloadId,
+      savedTo: t.savedTo || null,
       kind: t.kind,
       hls: t.hls && { done: t.hls.done, total: t.hls.total, duration: t.hls.duration },
     }));

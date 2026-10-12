@@ -502,6 +502,7 @@ function taskRow(task) {
   if (task.size) parts.push(`${bytes(task.status === 'completed' ? task.size : task.downloaded)} / ${bytes(task.size)}`);
   else if (task.hls && task.status !== 'completed') parts.push(bytes(task.downloaded), t('pieces', [`${task.hls.done}/${task.hls.total}`]));
   if (task.status === 'downloading') parts.push(speed(task.speed));
+  if (task.status === 'completed' && task.savedTo) parts.push(t('savedTo', [task.savedTo]));
   sub.textContent = parts.join(' · ');
   info.append(name, bar, sub);
 

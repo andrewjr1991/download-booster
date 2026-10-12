@@ -74,6 +74,7 @@ export const ERRORS = {
   engine: 'errEngine',
   live: 'errLive',
   drm: 'errDrm',
+  folder: 'errFolder',
 };
 
 export function statusText(task) {

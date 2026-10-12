@@ -84,6 +84,14 @@
           <input type="number" id="speedLimitMB" min="0" step="0.1" data-i18n-placeholder="noLimit" />
         </label>
         <p class="hint" data-i18n="settingsHint"></p>
+        <h3 data-i18n="saveFolder"></h3>
+        <div class="row folder-row">
+          <span id="folder-name" class="folder-name"></span>
+          <button type="button" id="folder-choose" data-i18n="folderChoose"></button>
+          <button type="button" id="folder-grant" class="primary" data-i18n="folderGrant" hidden></button>
+          <button type="button" id="folder-reset" class="ghost" data-i18n="folderReset" hidden></button>
+        </div>
+        <p class="hint" id="folder-hint"></p>
         <h3 data-i18n="sniffRules"></h3>
         <p class="hint" data-i18n="sniffRulesHint"></p>
         <label class="row">

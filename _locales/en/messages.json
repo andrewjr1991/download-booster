@@ -334,5 +334,43 @@
   },
   "separateAudio": {
     "message": "+ audio $1 (downloaded and joined in)"
+  },
+  "saveFolder": {
+    "message": "Save to"
+  },
+  "folderChoose": {
+    "message": "Choose folder…"
+  },
+  "folderGrant": {
+    "message": "Allow access"
+  },
+  "folderReset": {
+    "message": "Use the browser’s download folder"
+  },
+  "folderDefault": {
+    "message": "The browser’s download folder"
+  },
+  "folderHintDefault": {
+    "message": "Files are first put together in the browser’s storage and then saved, so a large file briefly takes twice its size on disk. Pick a folder to have files written straight into it."
+  },
+  "folderHintOn": {
+    "message": "Files are written straight into this folder while they download (as “name.part” until done). Pausing saves the progress; after a browser crash a file continues from its last pause."
+  },
+  "folderHintGrant": {
+    "message": "The browser needs your OK again to write to this folder. Until then new downloads go to the browser’s download folder."
+  },
+  "folderUnsupported": {
+    "message": "This browser cannot save into a chosen folder."
+  },
+  "savedTo": {
+    "message": "saved to $FOLDER$",
+    "placeholders": {
+      "folder": {
+        "content": "$1"
+      }
+    }
+  },
+  "errFolder": {
+    "message": "cannot write to the download folder (allow access in Settings)"
   }
 }
