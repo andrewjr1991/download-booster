@@ -104,24 +104,17 @@ function updateCard(card, task) {
   renderActions(card.querySelector('.actions'), task);
 }
 
-// The built-in speed comparison: what one connection achieved during the
-// first measurement window versus the average over the whole download.
+// The average speed of a finished download (and debug details while running).
 function compareLine(task) {
   if (task.rangeSupported === false) return t('noRange');
   const st = task.stats;
   if (!st?.activeMs) return '';
   if (task.status === 'downloading') return levelsLine(task);
   const avg = (task.status === 'completed' ? task.size : task.downloaded) / (st.activeMs / 1000);
-  if (st.singleSpeed > 0 && task.status !== 'downloading') {
-    const levels = levelsLine(task);
-    const cmp = t('speedCompare', [speed(st.singleSpeed), speed(avg), (avg / st.singleSpeed).toFixed(1)]);
-    return levels ? `${cmp} · ${levels}` : cmp;
-  }
   return task.status === 'completed' ? t('avgSpeed', [speed(avg)]) : '';
 }
 
-// What the adaptive controller measured at each connection count (debug
-// view only), to see why it settled where it did.
+// The average speed seen at each connection count (debug view only).
 function levelsLine(task) {
   if (!DEBUG) return '';
   const levels = Object.entries(task.stats?.levels || {}).sort((a, b) => a[0] - b[0]);

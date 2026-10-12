@@ -43,215 +43,65 @@ export function sortedSegments(segments) {
   return [...segments].sort((a, b) => a.start - b.start);
 }
 
-// Adaptive concurrency: start with 1 connection and add more while the
-// measured speed keeps rising by at least `gain` (doubling while the gain is
-// near-linear, then one at a time), step back to the best level when it
-// plateaus, then keep re-checking one level higher (every `reprobeMs`) and
-// one level lower (every `downProbeMs`).
+// Connection count: start straight at `max` and stay there; go one lower only
+// when the server pushes back (429/503, or it refuses an extra connection
+// while the others are streaming). After a push-back, wait `cooldownMs`
+// (doubling with each push-back, up to 4 minutes) and add one back, so the
+// limit is never permanent.
 //
-// Each level is judged on its average throughput over `measureMs`, and the
-// clock only starts once every connection of that level is streaming and has
-// had `settleMs` to ramp up. Judging a level while its newest connection is
-// still connecting makes the extra connection look useless.
+// Measuring whether each extra connection helps (and stepping back when it
+// did not) left fast servers on 2 connections: their speed swings by more
+// than one connection adds, so the measurements said "no gain".
 export class AdaptiveController {
-  constructor({
-    max = 6,
-    settleMs = 1000,
-    measureMs = 3000,
-    rampTimeoutMs = 10000,
-    gain = 1.12,
-    dropTolerance = 0.95,
-    collapse = 0.3,
-    collapseMs = 8000,
-    downProbeMs = 60000,
-    reprobeMs = 20000,
-    cooldownMs = 30000,
-  } = {}) {
+  constructor({ max = 6, cooldownMs = 30000 } = {}) {
     this.max = Math.max(1, max);
-    this.settleMs = settleMs;
-    this.measureMs = measureMs;
-    this.rampTimeoutMs = rampTimeoutMs;
-    this.gain = gain;
-    this.dropTolerance = dropTolerance;
-    this.collapse = collapse;
-    this.collapseMs = collapseMs;
-    this.limited = false; // a speed limit holds the speed down on purpose
-    this.lowSince = null;
-    this.downProbeMs = downProbeMs;
-    this.downFrom = null;
-    this.nextDownAt = null;
-    this.reprobeMs = reprobeMs;
     this.cooldownMs = cooldownMs;
-    this.target = 1;
-    this.best = 1;
-    this.baseline = null; // average speed at the best level so far
-    this.singleSpeed = null; // average speed measured with one connection
-    this.levels = {}; // connections -> measured bytes/s
-    this.slowStart = true;
+    this.target = this.max;
     this.backoffs = 0;
-    this.samples = []; // [time, bytes] for the rolling baseline
-    this.#raise(null, 1);
+    this.nextUpAt = null;
+    this.levels = {}; // connections -> average bytes/s seen (debug view)
+    this.last = null;
+    this.spent = {}; // connections -> [ms, bytes] behind `levels`
   }
 
   // Called on every tick with the total bytes downloaded so far and how many
-  // connections are currently receiving data. Returns the new target.
-  tick(now, bytes, streaming) {
-    this.samples.push([now, bytes]);
-    while (this.samples.length > 2 && now - this.samples[1][0] >= this.measureMs) this.samples.shift();
-    if (this.phaseStart === null) this.phaseStart = now;
-
-    if (this.phase === 'ramp') {
-      if (streaming >= this.target) {
-        this.readySince ??= now;
-        if (now - this.readySince >= this.settleMs) {
-          this.phase = 'measure';
-          this.measureStart = now;
-          this.measureBytes = bytes;
-        }
-      } else {
-        this.readySince = null;
-        // The level could not be filled (no work left to split, or a
-        // connection never got going): keep what we had.
-        if (now - this.phaseStart > this.rampTimeoutMs) this.#settle(now, this.best, this.reprobeMs);
-      }
-    } else if (this.phase === 'measure') {
-      if (streaming < this.target) {
-        // A connection dropped out mid-measurement; wait for it again.
-        this.phase = 'ramp';
-        this.phaseStart = now;
-        this.readySince = null;
-      } else if (now - this.measureStart >= this.measureMs) {
-        this.#judge(now, ((bytes - this.measureBytes) * 1000) / (now - this.measureStart));
-      }
-    } else if (this.#collapsed(now)) {
-      // The speed fell far below what this level measured (the fast
-      // connections finished their pieces, or the server changed): measure
-      // again and climb from here instead of one connection per reprobeMs.
-      this.rethink(now);
-    } else if (streaming >= this.target) {
-      // stable: re-check against the recent average, one connection more
-      // every `reprobeMs` and one fewer less often. Speeds drift during a
-      // long download (an early burst, the server changing its limits), so
-      // a level is only ever compared with one measured moments before.
-      const down = this.target > 1 && now >= this.nextDownAt;
-      const up = !down && this.target < this.max && now >= this.nextProbeAt;
-      if (down || up) {
-        this.baseline = this.#rollingSpeed();
-        this.best = this.target;
-        this.slowStart = false;
-        if (down) this.downFrom = this.target;
-        this.#raise(now, this.target + (down ? -1 : 1));
-      }
+  // connections are currently receiving data. Returns the target.
+  tick(now, bytes, streaming = this.target) {
+    if (this.last && streaming >= this.target) {
+      const acc = (this.spent[this.target] ??= [0, 0]);
+      acc[0] += now - this.last[0];
+      acc[1] += bytes - this.last[1];
+      if (acc[0] >= 1000) this.levels[this.target] = Math.round((acc[1] * 1000) / acc[0]);
+    }
+    this.last = [now, bytes];
+    this.target = Math.min(this.target, this.max);
+    if (this.target < this.max && this.nextUpAt !== null && now >= this.nextUpAt) {
+      this.target += 1;
+      this.nextUpAt = this.target < this.max ? now + this.cooldownMs : null;
     }
     return this.target;
   }
 
-  #judge(now, speed) {
-    this.levels[this.target] = Math.round(speed);
-    if (this.downFrom) {
-      // One fewer connection is about as fast: keep the smaller number and
-      // soon try one fewer again. Otherwise go back and wait longer.
-      const from = this.downFrom;
-      const fewerIsFine = speed >= this.baseline * this.dropTolerance;
-      this.#settle(now, fewerIsFine ? this.target : from, this.reprobeMs);
-      this.nextDownAt = now + (fewerIsFine ? this.reprobeMs : this.downProbeMs);
-      return;
-    }
-    if (this.baseline === null) {
-      if (this.target === 1) this.singleSpeed = speed;
-      return this.#accept(now, speed);
-    }
-    if (speed >= this.baseline * this.gain) {
-      // Keep doubling only while each added connection brings close to a
-      // full connection's worth of speed.
-      const added = this.target - this.best;
-      const perConn = this.baseline / this.best;
-      if ((speed - this.baseline) / added < 0.7 * perConn) this.slowStart = false;
-      return this.#accept(now, speed);
-    }
-    if (this.target - this.best > 1) {
-      // Overshot while doubling: try one above the best level instead.
-      this.slowStart = false;
-      return this.#raise(now, this.best + 1);
-    }
-    this.#settle(now, this.best, this.reprobeMs);
-  }
-
-  #accept(now, speed) {
-    this.best = this.target;
-    this.baseline = speed;
-    if (this.target >= this.max) return this.#settle(now, this.target, this.reprobeMs);
-    this.#raise(now, this.slowStart ? Math.min(this.max, this.target * 2) : this.target + 1);
-  }
-
-  #raise(now, level) {
-    this.target = Math.min(level, this.max);
-    this.phase = 'ramp';
-    this.phaseStart = now;
-    this.readySince = null;
-  }
-
-  #settle(now, level, wait) {
-    this.downFrom = null;
-    this.nextDownAt ??= now + this.downProbeMs;
-    this.target = Math.max(1, Math.min(level, this.max));
-    this.best = this.target;
-    this.phase = 'stable';
-    this.nextProbeAt = now + wait;
-  }
-
-  #collapsed(now) {
-    if (this.limited || !this.baseline || this.samples.length < 2 || now - this.samples[0][0] < this.measureMs * 0.8) {
-      this.lowSince = null;
-      return false;
-    }
-    if (this.#rollingSpeed() >= this.baseline * this.collapse) {
-      this.lowSince = null;
-      return false;
-    }
-    this.lowSince ??= now;
-    if (now - this.lowSince < this.collapseMs) return false;
-    this.lowSince = null;
-    return true;
-  }
-
-  #rollingSpeed() {
-    if (this.samples.length < 2) return 0;
-    const [t0, b0] = this.samples[0];
-    const [t1, b1] = this.samples[this.samples.length - 1];
-    return t1 > t0 ? ((b1 - b0) * 1000) / (t1 - t0) : 0;
-  }
-
-  // Server pushed back (429/503): drop one connection and wait before probing
-  // upward again. The wait doubles with each push-back, up to 4 minutes, but
-  // the limit is never permanent.
+  // The server pushed back: one connection fewer for a while.
   backoff(now) {
     // Several connections usually fail together; count that as one push-back.
     if (now - (this.lastBackoff ?? -Infinity) < 3000) return;
     this.lastBackoff = now;
-    const wait = this.cooldownMs * 2 ** Math.min(this.backoffs, 3);
+    this.target = Math.max(1, this.target - 1);
+    this.nextUpAt = now + this.cooldownMs * 2 ** Math.min(this.backoffs, 3);
     this.backoffs += 1;
-    this.slowStart = false;
-    this.#settle(now, this.target - 1, wait);
   }
 
-  // Conditions changed for the better (the speed limit was raised or lifted):
-  // measure the current level afresh and climb again with doubling, instead
-  // of one connection per `reprobeMs`.
-  rethink(now) {
-    this.baseline = null;
-    this.slowStart = true;
-    this.downFrom = null;
-    this.#raise(now, this.target);
+  // A new maximum (mirrors found, or ranges turned out unsupported): keep
+  // any push-back and move by the difference.
+  setMax(max) {
+    max = Math.max(1, max);
+    this.target = Math.max(1, Math.min(max, this.target + max - this.max));
+    this.max = max;
   }
 
   snapshot() {
-    return {
-      target: this.target,
-      phase: this.phase,
-      singleSpeed: this.singleSpeed,
-      levels: { ...this.levels },
-    };
+    return { target: this.target, levels: { ...this.levels } };
   }
 }
 

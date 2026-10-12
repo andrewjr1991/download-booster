@@ -38,88 +38,42 @@ test('splitLargest halves the active segment with most bytes left', () => {
   assert.equal(remaining(segs[0]) + remaining(s), 90 * MIN_SPLIT);
 });
 
-// Simulated network: each connection gets `perConn` MB/s after a time to
-// first byte and a linear ramp-up; the line caps the total at `cap` MB/s.
-function simulate({ perConn, cap, capAt, max = 6, ttfb = 0, rampMs = 0, noise = 0, until = 60000, events = {} }) {
-  const c = new AdaptiveController({ max });
-  let seed = 42;
-  const rand = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
-  const conns = [-60000]; // connection 1 is already streaming when ticking starts
-  const trace = [];
-  let bytes = 0;
-  for (let t = 0; t <= until; t += 500) {
-    let sum = 0;
-    for (const s of conns) {
-      const a = t - s - ttfb;
-      if (a > 0) sum += perConn * (rampMs ? Math.min(1, a / rampMs) : 1);
-    }
-    bytes += Math.min(sum, capAt ? capAt(t) : cap) * 0.5 * (1 - noise + 2 * noise * rand());
-    events[t]?.(c, t);
-    const streaming = conns.filter((s) => t - s >= ttfb).length;
-    c.tick(t, bytes, streaming);
-    while (conns.length < c.target) conns.push(t);
-    while (conns.length > c.target) conns.pop();
-    trace.push([t, c.target]);
-  }
-  return { c, trace };
-}
-const minAfter = (trace, t0) => Math.min(...trace.filter(([t]) => t >= t0).map(([, n]) => n));
-
-test('adds connections while speed rises, stops at the plateau', () => {
-  // Per-request limit 1 MB/s, line 4 MB/s: best is 4 connections.
-  const { c, trace } = simulate({ perConn: 1, cap: 4 });
-  assert.equal(c.best, 4);
-  assert.equal(c.singleSpeed, 1);
-  assert.equal(minAfter(trace, 20000), 4);
-});
-
-test('a slow-starting extra connection is not judged useless (real CDN case)', () => {
-  // 7 MB/s per connection, 14 MB/s line, new connections need 1.5 s to the
-  // first byte and 2.5 s to ramp up, ±10% noise. Must hold 2 connections.
-  const { c, trace } = simulate({ perConn: 7, cap: 14, ttfb: 1500, rampMs: 2500, noise: 0.1, until: 180000 });
-  assert.equal(c.best, 2);
-  // Brief dips are the periodic one-fewer re-checks.
-  const later = trace.filter(([t]) => t >= 20000);
-  const share = later.filter(([, n]) => n >= 2).length / later.length;
-  assert.ok(share > 0.9, `only ${share} of the time on 2+ connections`);
-});
-
-test('comes back down when extra connections stop helping', () => {
-  // 4 MB/s per connection up to 12 MB/s: 3 connections. From 60 s on the
-  // server caps the whole download at 4 MB/s, so 1 connection is enough.
-  const capAt = (t) => (t < 60000 ? 12 : 4);
-  const { trace } = simulate({ perConn: 4, cap: 12, capAt, until: 240000 });
-  const at = (ms) => trace.find(([t]) => t === ms)[1];
-  assert.ok(at(55000) >= 3);
-  assert.ok(trace.filter(([t]) => t >= 180000).every(([, n]) => n <= 2), 'still above 2 connections after 3 minutes');
-});
-
-test('stays on one connection when more do not help', () => {
-  const { c, trace } = simulate({ perConn: 10, cap: 10, noise: 0.05, until: 120000 });
-  assert.equal(c.best, 1);
-  const atOne = trace.filter(([, n]) => n === 1).length / trace.length;
-  assert.ok(atOne > 0.6, `only ${atOne} of the time on 1 connection`);
-});
-
-test('never exceeds max', () => {
-  const { c, trace } = simulate({ perConn: 1, cap: 100, max: 6 });
+test('starts at the maximum and stays there', () => {
+  const c = new AdaptiveController({ max: 6 });
   assert.equal(c.target, 6);
-  assert.ok(trace.every(([, n]) => n <= 6));
+  let bytes = 0;
+  for (let t = 0; t <= 120000; t += 250) {
+    // Speed swinging between 5 and 60 MB/s must not take connections away.
+    bytes += ((t / 1000) % 10 < 5 ? 60e6 : 5e6) / 4;
+    assert.equal(c.tick(t, bytes, 6), 6);
+  }
+  assert.ok(c.levels[6] > 0);
 });
 
-test('backoff drops one connection, then probes again after the cooldown', () => {
-  const events = {
-    30000: (c, t) => {
-      c.backoff(t);
-      c.backoff(t + 500); // a burst of errors counts once
-    },
-  };
-  const { trace } = simulate({ perConn: 1, cap: 4, until: 150000, events });
-  const at = (ms) => trace.find(([t]) => t === ms)[1];
-  assert.equal(at(30000), 3);
-  assert.ok(at(55000) >= 3);
-  const later = trace.filter(([t]) => t >= 65000);
-  assert.ok(later.filter(([, n]) => n >= 4).length / later.length > 0.7, 'did not return to 4 connections');
+test('backoff drops one connection, then adds it back after the cooldown', () => {
+  const c = new AdaptiveController({ max: 6, cooldownMs: 30000 });
+  c.backoff(1000);
+  c.backoff(1500); // a burst of errors counts once
+  assert.equal(c.tick(2000, 0), 5);
+  assert.equal(c.tick(30000, 0), 5);
+  assert.equal(c.tick(31000, 0), 6);
+  // A second push-back waits twice as long.
+  c.backoff(40000);
+  assert.equal(c.tick(99999, 0), 5);
+  assert.equal(c.tick(100000, 0), 6);
+  // Never below one connection.
+  const one = new AdaptiveController({ max: 1 });
+  one.backoff(0);
+  assert.equal(one.tick(1, 0), 1);
+});
+
+test('a new maximum keeps the push-back', () => {
+  const c = new AdaptiveController({ max: 6 });
+  c.backoff(0);
+  c.setMax(12); // a mirror doubles the room
+  assert.equal(c.tick(1, 0), 11);
+  c.setMax(1); // ranges unsupported after all
+  assert.equal(c.tick(2, 0), 1);
 });
 
 test('sniffed links: categories, dedupe, pasted lists', () => {
@@ -170,23 +124,6 @@ test('speed limit: connections together stay at the rate', () => {
   assert.equal(new RateLimiter(0).take(1e9, 0), 0, 'no limit never waits');
   lim.setRate(0);
   assert.equal(lim.take(1e9, now), 0);
-});
-
-test('rethink climbs again quickly once a limit is lifted', () => {
-  const c = new AdaptiveController({ max: 6 });
-  const run = (from, to, perConnCap) => {
-    let bytes = run.bytes || 0;
-    for (let now = from; now < to; now += 100) {
-      bytes += (Math.min(c.target * 2, perConnCap) * 1048576) / 10;
-      c.tick(now, bytes, c.target);
-    }
-    run.bytes = bytes;
-  };
-  run(0, 30000, 1.5); // limited to 1.5 MB/s: one connection is plenty
-  assert.ok(c.target <= 2, `target ${c.target}`); // 2 only while re-probing
-  c.rethink(30000);
-  run(30000, 50000, 100); // 2 MB/s per connection, no limit
-  assert.ok(c.target >= 4, `target ${c.target}`);
 });
 
 test('media seen on the network: kinds, sizes, duplicates', () => {
@@ -484,32 +421,3 @@ test('checksums: MD5, SHA-1 and SHA-256 fed in pieces match node:crypto', () => 
   assert.equal(parseChecksum('abc'), null);
 });
 
-test('a collapse in speed makes the controller measure and climb again', () => {
-  const c = new AdaptiveController({ max: 6 });
-  let t = 0;
-  let bytes = 0;
-  const run = (ms, perConn) => {
-    for (let end = t + ms; t < end; t += 250) {
-      bytes += (perConn * c.target * 250) / 1000;
-      c.tick(t, bytes, c.target);
-    }
-  };
-  run(30000, 10e6); // climbs to 6 at 10 MB/s per connection
-  assert.equal(c.target, 6);
-  assert.equal(c.phase, 'stable');
-  run(12000, 0.1e6); // every connection now crawls
-  assert.notEqual(c.phase, 'stable', 'it measures again instead of sitting at the old level');
-  const limited = new AdaptiveController({ max: 6 });
-  t = 0;
-  bytes = 0;
-  const run2 = (ms, perConn) => {
-    for (let end = t + ms; t < end; t += 250) {
-      bytes += (perConn * limited.target * 250) / 1000;
-      limited.tick(t, bytes, limited.target);
-    }
-  };
-  run2(30000, 10e6);
-  limited.limited = true; // a speed limit slows it on purpose
-  run2(12000, 0.1e6);
-  assert.equal(limited.phase, 'stable');
-});

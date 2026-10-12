@@ -444,15 +444,14 @@ await check('speed limit: all tasks together stay under it, and lifting it speed
   await sleep(8000);
   const limited = ((await total()) - b0) / ((Date.now() - t0) / 1000);
   if (limited > LIMIT * 1.15 || limited < LIMIT * 0.75) throw new Error(`limited speed ${mbps(limited, 1000)}`);
-  await engine('set-limit', { maxActive: 3, speedLimit: 0 });
-  await sleep(4000);
+  // Unlimited, both finish within seconds: time the rest of the download.
   b0 = await total();
   t0 = Date.now();
-  await sleep(4000);
-  const free = ((await total()) - b0) / ((Date.now() - t0) / 1000);
-  if (free < LIMIT * 2) throw new Error(`after lifting the limit only ${mbps(free, 1000)}`);
+  await engine('set-limit', { maxActive: 3, speedLimit: 0 });
   const done = await waitTask(ids[0], (t) => t.status === 'completed');
   await waitTask(ids[1], (t) => t.status === 'completed');
+  const free = (2 * srv.size - b0) / ((Date.now() - t0) / 1000);
+  if (free < LIMIT * 2) throw new Error(`after lifting the limit only ${mbps(free, 1000)}`);
   const { hash } = await savedFileHash(done.downloadId);
   if (hash !== srv.sha256) throw new Error('hash mismatch');
   await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6 });
