@@ -113,6 +113,9 @@
   "saveReadFailed": {
     "message": "读取已下载的数据出错"
   },
+  "saveTransient": {
+    "message": "系统多次拒绝写入，常见于杀毒软件或网盘同步占用文件；在设置里选一个保存文件夹可以跳过这一步"
+  },
   "saveNoSpace": {
     "message": "磁盘空间不足"
   },

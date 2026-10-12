@@ -90,7 +90,9 @@ async function handle(msg) {
       if (!['USER_CANCELED', 'FILE_NO_SPACE'].includes(msg.error) && (t.saveRetries || 0) < 2) {
         t.saveRetries = (t.saveRetries || 0) + 1;
         console.warn(`saving ${t.filename} failed (${msg.error}), retrying`);
-        await save(t);
+        // Most such failures pass (a file briefly locked): wait a little first.
+        await new Promise((r) => setTimeout(r, 3000 * t.saveRetries));
+        if (t.status === 'saving') await save(t);
       } else setStatus(t, 'error', { code: 'save', message: msg.error });
       return { ok: true };
     case 'clear-finished':

@@ -81,6 +81,7 @@ export const ERRORS = {
 // Why Chrome could not save a finished file (chrome.downloads error codes).
 const SAVE_REASONS = {
   FILE_FAILED: 'saveWriteFailed',
+  FILE_TRANSIENT_ERROR: 'saveTransient',
   NETWORK_FAILED: 'saveReadFailed',
   FILE_NO_SPACE: 'saveNoSpace',
   FILE_ACCESS_DENIED: 'saveDenied',

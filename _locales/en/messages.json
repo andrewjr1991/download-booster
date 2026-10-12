@@ -113,6 +113,9 @@
   "saveReadFailed": {
     "message": "reading the downloaded data failed"
   },
+  "saveTransient": {
+    "message": "the system kept refusing to write the file, often an antivirus or a sync tool holding it; choosing a download folder in Settings avoids this step"
+  },
   "saveNoSpace": {
     "message": "disk full"
   },
