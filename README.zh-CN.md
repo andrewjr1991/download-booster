@@ -87,3 +87,7 @@ npm run zip         # 打包成 download-booster.zip
 实现细节、测试记录和代码结构见 [开发说明](docs/DEVELOPMENT.md)。
 
 问题和建议请提交 [Issue](https://github.com/andrewjr1991/download-booster/issues)。
+
+## 许可证
+
+[MIT](LICENSE)

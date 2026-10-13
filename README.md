@@ -87,3 +87,7 @@ npm run zip         # package as download-booster.zip
 Implementation notes, test records and the code layout are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) (Chinese).
 
 Questions and suggestions: [open an issue](https://github.com/andrewjr1991/download-booster/issues).
+
+## License
+
+[MIT](LICENSE)
