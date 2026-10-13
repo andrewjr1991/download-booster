@@ -36,7 +36,7 @@
     "message": "Max connections per download"
   },
   "settingsHint": {
-    "message": "Starts with 1 connection and adds more only while the speed keeps rising. Browsers allow at most 6 connections per site (HTTP/1.1); HTTP/2 sites share one."
+    "message": "Each download starts with the number of connections set above, and only uses fewer while the server refuses more, adding them back later. Browsers allow at most 6 connections per site (HTTP/1.1); HTTP/2 sites share one."
   },
   "statusQueued": {
     "message": "Queued"
@@ -378,7 +378,7 @@
     "message": "Files are first put together in the browser’s storage and then saved, so a large file briefly takes twice its size on disk. Pick a folder to have files written straight into it (a folder inside Downloads, e.g. Downloads/Download Booster: Chrome doesn’t allow Downloads itself)."
   },
   "folderHintOn": {
-    "message": "Files are written straight into this folder while they download (as “name.part” until done). Pausing saves the progress; after a browser crash a file continues from its last pause."
+    "message": "Files are written straight into this folder while they download (as “name.part” until done), and the progress is saved every so often. If a write is refused, the download picks up from the last save by itself; after a pause or a browser crash it continues from there too."
   },
   "folderHintGrant": {
     "message": "The browser needs your OK again to write to this folder. Until then new downloads go to the browser’s download folder."
@@ -394,8 +394,11 @@
       }
     }
   },
+  "folderNeedsGrant": {
+    "message": "the browser withdrew write access to this folder: click \"Allow access\" in Settings, then Retry; nothing is downloaded again"
+  },
   "errFolder": {
-    "message": "cannot write to the download folder (allow access in Settings)"
+    "message": "Could not write to the download folder"
   },
   "addMore": {
     "message": "Checksum and mirrors"

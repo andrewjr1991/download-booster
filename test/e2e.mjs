@@ -9,6 +9,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { startServer } from './server.mjs';
 import { startH2Server } from './h2server.mjs';
+import { hookWorkers } from './workerhook.mjs';
 
 const EXT = process.env.EXT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SIZE_MB = Number(process.env.SIZE_MB || 40);
@@ -36,6 +37,7 @@ page.on('console', (m) => process.env.VERBOSE && console.log('[manager]', m.text
 await page.goto(`chrome-extension://${extId}/src/manager.html`);
 // The manager sends the saved limits on load; let that land before tests set their own.
 await page.waitForSelector('body[data-synced]');
+const setWorkerHook = await hookWorkers(ctx, page);
 
 const engine = (cmd, args = {}) => page.evaluate(([cmd, args]) => chrome.runtime.sendMessage({ type: 'engine', cmd, ...args }), [cmd, args]);
 const setSettings = (s) => page.evaluate((s) => chrome.storage.local.set({ settings: s }), s);
@@ -755,6 +757,11 @@ const folderFiles = () =>
       const dir = await root.getDirectoryHandle(name, { create: true });
       for await (const [n, h] of dir.entries()) {
         const f = await h.getFile();
+        // A .part file may change while it is read.
+        if (n.endsWith('.part')) {
+          out[`${name}/${n}`] = { size: f.size };
+          continue;
+        }
         const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', await f.arrayBuffer()))].map((b) => b.toString(16).padStart(2, '0')).join('');
         out[`${name}/${n}`] = { size: f.size, hash };
       }
@@ -794,6 +801,66 @@ await check('download folder: pausing keeps the progress in the .part file, a se
   const files = await folderFiles();
   if (done.savedTo !== 'picked/test-40MB (1).bin' || files['picked/test-40MB (1).bin']?.hash !== srv.sha256) throw new Error(`saved ${done.savedTo}: ${JSON.stringify(Object.keys(files))}`);
   return `paused at ${((paused.downloaded / srv.size) * 100).toFixed(0)}%, resumed from there, saved ${done.savedTo}`;
+});
+
+// Make writes into the download folder fail, as Chrome did on Windows: the
+// first write after `after` bytes is refused; with `permission`, the folder
+// also reports that access is gone.
+const failFolderWrites = (after, permission = 'granted') => `(() => {
+  self.COMMIT_MIN_BYTES = 16 * 1048576;
+  let written = 0;
+  let failed = false;
+  const write = FileSystemWritableFileStream.prototype.write;
+  FileSystemWritableFileStream.prototype.write = function (chunk) {
+    written += chunk?.data?.byteLength || 0;
+    if (!failed && written > ${after}) {
+      failed = true;
+      if (${JSON.stringify(permission)} !== 'granted') FileSystemHandle.prototype.queryPermission = async () => ${JSON.stringify(permission)};
+      return Promise.reject(new DOMException('The request is not allowed', 'NotAllowedError'));
+    }
+    return write.call(this, chunk);
+  };
+})();`;
+
+await check('download folder: a refused write goes back to the last commit and carries on', async () => {
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6 });
+  setWorkerHook(failFolderWrites(30 * 1048576));
+  try {
+    const { id } = await engine('add', { url: `${srv.url}/file.bin?refused=1`, maxConnections: 6 });
+    const done = await waitTask(id, (t) => t.status === 'completed');
+    const files = await folderFiles();
+    const saved = files[done.savedTo];
+    if (saved?.hash !== srv.sha256) throw new Error(`saved ${done.savedTo}: ${JSON.stringify(Object.keys(files))}`);
+    if (!done.folderRetries) throw new Error('no write was refused');
+    if (Object.keys(files).some((n) => n.endsWith('.part'))) throw new Error(`left over: ${Object.keys(files)}`);
+    return `write refused after 30 MB, continued from the last commit ("${done.lastFolderError}"), saved ${done.savedTo} intact`;
+  } finally {
+    setWorkerHook('');
+  }
+});
+
+await check('download folder: if access is withdrawn, the download stops with the reason and continues after allowing again', async () => {
+  setWorkerHook(failFolderWrites(28 * 1048576, 'prompt'));
+  let id;
+  try {
+    ({ id } = await engine('add', { url: `${srv.url}/file.bin?revoked=1`, maxConnections: 6 }));
+    // Commits every 16 MB here: refuse once more than that is written.
+    await waitTask(id, (t) => t.status === 'error', 180000).catch(() => {});
+  } finally {
+    setWorkerHook('');
+  }
+  const t = (await engine('list')).tasks.find((x) => x.id === id);
+  if (t.status !== 'error' || t.error?.code !== 'folder') throw new Error(`ended ${t.status} ${JSON.stringify(t.error)}`);
+  const shown = await page.evaluate(async (t) => (await import('./client.js')).statusText(t), t);
+  if (!shown.includes('(')) throw new Error(`shown as "${shown}"`);
+  const kept = t.downloaded;
+  const mark = srv.log.length;
+  await engine('resume', { id });
+  const done = await waitTask(id, (x) => x.status === 'completed');
+  const files = await folderFiles();
+  if (files[done.savedTo]?.hash !== srv.sha256) throw new Error(`saved ${done.savedTo}: ${JSON.stringify(Object.keys(files))}`);
+  const fromStart = srv.log.slice(mark).filter((l) => /^bytes=0-(?!0$)/.test(l.range || '')).length;
+  return `"${shown}", kept ${(kept / 1048576).toFixed(0)} MB committed, ${fromStart ? 'restarted' : 'continued'} after allowing again, saved intact`;
 });
 
 await check('download folder: removing an unfinished download deletes its .part file', async () => {

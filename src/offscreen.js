@@ -347,6 +347,17 @@ async function onWorkerMessage(t, m) {
       t.connections = 0;
       if (t.folderPart) t.folderSegments = m.segments;
       break;
+    case 'committed':
+      // The folder file now holds these pieces for good.
+      t.folderSegments = m.segments;
+      persist(t);
+      break;
+    case 'folder-retry':
+      // A write into the folder was refused; the worker went back to the
+      // last commit and carries on from there.
+      console.warn(`writing ${t.filename} into the folder failed (${m.error}); continuing from the last commit`);
+      Object.assign(t, { segments: m.segments, folderRetries: (t.folderRetries || 0) + 1, lastFolderError: m.error });
+      break;
     case 'stopped':
       endWorker(t);
       Object.assign(t, { downloaded: m.downloaded, segments: m.segments, stats: m.stats || t.stats });
@@ -467,12 +478,7 @@ async function save(t) {
     const file = await getOpfsFile(t);
     // A download folder is set: copy it there (HLS streams and recordings
     // are put together in the browser's storage first).
-    if (t.folder && (await folderPermission(t.folder)) === 'granted') {
-      const name = await uniqueName(t.folder, t.filename || 'download');
-      await copyInto(t.folder, name, file);
-      Object.assign(t, { filename: name, savedTo: `${t.folder.name}/${name}` });
-      return onSaved(t, null);
-    }
+    if (t.folder) return await saveToFolder(t, file);
     // OPFS files have no type, and Chrome then treats the blob as text/plain:
     // on Windows that renames "video.mp4" to "video.txt". Give it a real one.
     if (blobUrls.has(t.id)) URL.revokeObjectURL(blobUrls.get(t.id));
@@ -490,6 +496,32 @@ async function save(t) {
   } catch (err) {
     setStatus(t, 'error', { code: 'save', message: String(err?.message || err) });
   }
+}
+
+async function saveToFolder(t, file) {
+  // The folder picked in Settings now: picking it again (or another one)
+  // after a failed save is how the user fixes it.
+  t.folder = (await getFolder().catch(() => null)) || t.folder;
+  const permission = await folderPermission(t.folder);
+  if (permission !== 'granted') {
+    return setStatus(t, 'error', { code: 'folder', message: `permission-${permission}` });
+  }
+  let lastErr;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const name = await uniqueName(t.folder, t.filename || 'download');
+      await copyInto(t.folder, name, file);
+      Object.assign(t, { filename: name, savedTo: `${t.folder.name}/${name}` });
+      return onSaved(t, null);
+    } catch (err) {
+      lastErr = err;
+      console.warn('copying into the download folder failed', err);
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
+  const permissionNow = await folderPermission(t.folder);
+  const message = permissionNow !== 'granted' ? `permission-${permissionNow}` : `${lastErr?.name || 'Error'}: ${lastErr?.message || lastErr}`;
+  setStatus(t, 'error', { code: 'folder', message });
 }
 
 // The background turns these into declarativeNetRequest rules that add the
@@ -614,6 +646,8 @@ function summaries() {
       finishedAt: t.finishedAt,
       downloadId: t.downloadId,
       savedTo: t.savedTo || null,
+      folderRetries: t.folderRetries || 0,
+      lastFolderError: t.lastFolderError || null,
       checksum: t.checksum?.algo || null,
       verified: t.verified ? { algo: t.verified.algo, ok: t.verified.ok } : null,
       verifying: t.verifying || null,
