@@ -231,10 +231,7 @@ function pump() {
 
 async function startWorker(t) {
   workers.get(t.id)?.terminate();
-  // Only a download started by an older version writes straight into the
-  // folder; it carries on there. New ones are put together in the browser's
-  // storage and copied into the folder at the end (see save()).
-  const direct = t.folder && t.kind === 'file' && !!t.folderPart;
+  const direct = t.folder && t.kind === 'file';
   const script = t.kind === 'hls' ? './hls-worker.js' : './task-worker.js';
   const w = new Worker(new URL(script, import.meta.url), { type: 'module' });
   workers.set(t.id, w);
@@ -349,6 +346,17 @@ async function onWorkerMessage(t, m) {
       t.speed = 0;
       t.connections = 0;
       if (t.folderPart) t.folderSegments = m.segments;
+      break;
+    case 'committed':
+      // The folder file now holds these pieces for good.
+      t.folderSegments = m.segments;
+      persist(t);
+      break;
+    case 'folder-retry':
+      // A write into the folder was refused; the worker went back to the
+      // last commit and carries on from there.
+      console.warn(`writing ${t.filename} into the folder failed (${m.error}); continuing from the last commit`);
+      Object.assign(t, { segments: m.segments, folderRetries: (t.folderRetries || 0) + 1, lastFolderError: m.error });
       break;
     case 'stopped':
       endWorker(t);
@@ -468,10 +476,8 @@ async function save(t) {
   setStatus(t, 'saving');
   try {
     const file = await getOpfsFile(t);
-    // A download folder is set: copy the finished file there. Writing into
-    // the folder while downloading lost everything since the last pause when
-    // the browser stopped allowing writes part-way; a copy that fails can
-    // simply be retried.
+    // A download folder is set: copy it there (HLS streams and recordings
+    // are put together in the browser's storage first).
     if (t.folder) return await saveToFolder(t, file);
     // OPFS files have no type, and Chrome then treats the blob as text/plain:
     // on Windows that renames "video.mp4" to "video.txt". Give it a real one.
@@ -640,6 +646,8 @@ function summaries() {
       finishedAt: t.finishedAt,
       downloadId: t.downloadId,
       savedTo: t.savedTo || null,
+      folderRetries: t.folderRetries || 0,
+      lastFolderError: t.lastFolderError || null,
       checksum: t.checksum?.algo || null,
       verified: t.verified ? { algo: t.verified.algo, ok: t.verified.ok } : null,
       verifying: t.verifying || null,

@@ -375,10 +375,10 @@
     "message": "The browser’s download folder"
   },
   "folderHintDefault": {
-    "message": "Files are put together inside the browser and then saved, so a big file briefly takes twice its size on disk. You can also pick a folder to save finished downloads into (pick a folder inside Downloads, such as Downloads/Download Booster: Chrome does not allow Downloads itself)."
+    "message": "Files are first put together in the browser’s storage and then saved, so a large file briefly takes twice its size on disk. Pick a folder to have files written straight into it (a folder inside Downloads, e.g. Downloads/Download Booster: Chrome doesn’t allow Downloads itself)."
   },
   "folderHintOn": {
-    "message": "Finished downloads are saved into this folder. While downloading they are kept inside the browser, so closing the browser or a change in folder access loses no progress; saving briefly takes twice the file size on disk."
+    "message": "Files are written straight into this folder while they download (as “name.part” until done), and the progress is saved every so often. If a write is refused, the download picks up from the last save by itself; after a pause or a browser crash it continues from there too."
   },
   "folderHintGrant": {
     "message": "The browser needs your OK again to write to this folder. Until then new downloads go to the browser’s download folder."

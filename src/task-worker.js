@@ -24,6 +24,10 @@ const TICK_MS = 500;
 const CHECKPOINT_MS = 2000;
 const MAX_FAILURES = 8;
 const STALL_MS = 15000; // a connection silent this long is restarted
+const COMMIT_MIN = 256 * 1048576; // commit the folder file after this much, or
+// half of what is already committed if more (each commit copies the file).
+// The e2e test lowers it through self.COMMIT_MIN_BYTES.
+const FOLDER_RETRIES = 3; // times a refused write is retried from the last commit
 const FRESH_MS = 3000; // a connection counts as streaming if data came this recently
 // One connection can be many times slower than another to the same server
 // (a different server behind the address, a congested route). A connection
@@ -64,6 +68,13 @@ let stopping = false;
 let finished = false;
 let failures = 0;
 let rateGen = 0; // bumped when the speed limit changes
+// Writing into the user's folder: the pieces as they were at the last commit
+// (what the .part file really holds), bytes written since, and recovery.
+let committed = null;
+let sinceCommit = 0;
+let committing = false;
+let recovering = false;
+let folderRetries = 0;
 let restarted = false;
 let ticker;
 let lastCheckpoint = 0;
@@ -125,9 +136,20 @@ class OpfsFile {
 // A file in the user's folder: asynchronous writes, kept in order, and
 // committed by close().
 class FolderFile {
-  constructor(ws) {
+  constructor(fh, ws) {
+    this.fh = fh;
     this.ws = ws;
     this.queue = Promise.resolve();
+  }
+  // Make what is written so far permanent: Chrome only puts the data into
+  // the file when the stream is closed, so carry on in a new stream that
+  // starts from the committed file.
+  commit() {
+    this.queue = this.queue.then(async () => {
+      await this.ws.close();
+      this.ws = await this.fh.createWritable({ keepExistingData: true });
+    });
+    return this.queue;
   }
   write(data, at) {
     this.queue = this.queue.then(() => this.ws.write({ type: 'write', position: at, data }));
@@ -161,7 +183,7 @@ async function openFile() {
 
 async function openPart(name, keep) {
   const fh = await task.folder.dir.getFileHandle(name, { create: true });
-  handle = new FolderFile(await fh.createWritable({ keepExistingData: keep }));
+  handle = new FolderFile(fh, await fh.createWritable({ keepExistingData: keep }));
   task.folder.part = name;
 }
 
@@ -208,6 +230,7 @@ async function start(t) {
   if (task.segments && task.rangeSupported) {
     checkMirrors();
     segments = task.segments.map((s) => ({ ...s }));
+    if (task.folder) committed = segments.map(({ id, start, end, pos }) => ({ id, start, end, pos }));
     beginTicking();
     schedule();
     detectProtocol();
@@ -293,6 +316,7 @@ async function probe() {
   if (!rangeSupported) controller.setMax(1);
   else checkMirrors();
   segments = [{ id: 0, start: 0, end: size ?? Infinity, pos: 0 }];
+  if (task.folder) committed = segments.map(({ id, start, end, pos }) => ({ id, start, end, pos }));
   post({ type: 'meta', meta, segments });
   beginTicking();
   runConn(segments[0], resp, ac, 'include');
@@ -312,7 +336,8 @@ function beginTicking() {
 }
 
 function tick() {
-  if (stopping || finished) return;
+  if (stopping || finished || recovering) return;
+  maybeCommit();
   const now = Date.now();
   if (conns.size > 0) activeMs += now - lastTick;
   lastTick = now;
@@ -436,6 +461,66 @@ function replaceSlow(now) {
   }
 }
 
+// Commit the folder file every so often, so a refused write later on only
+// loses what came after the last commit.
+function maybeCommit() {
+  if (!(handle instanceof FolderFile) || committing) return;
+  const have = downloadedBytes(committed || []);
+  if (sinceCommit < Math.max(self.COMMIT_MIN_BYTES || COMMIT_MIN, have / 2)) return;
+  const snapshot = segments.map(({ id, start, end, pos }) => ({ id, start, end, pos }));
+  const h = handle;
+  committing = true;
+  sinceCommit = 0;
+  h.commit()
+    .then(() => {
+      if (handle !== h) return;
+      committed = snapshot;
+      post({ type: 'committed', segments: snapshot });
+    })
+    .catch((err) => onFolderError(err))
+    .finally(() => {
+      committing = false;
+    });
+}
+
+// Chrome refused a write into the folder (or a commit). Everything since the
+// last commit is gone: go back to it, and if the folder may still be
+// written, open the file again and carry on; otherwise stop and say why.
+async function onFolderError(err) {
+  if (recovering || stopping || finished) return;
+  recovering = true;
+  console.warn('writing into the folder failed', err);
+  for (const c of conns.values()) c.ac.abort('folder');
+  conns.clear();
+  const h = handle;
+  handle = null;
+  await h?.discard?.();
+  segments = (committed || []).map((x) => ({ ...x }));
+  sinceCommit = 0;
+  let permission = 'denied';
+  try {
+    permission = await task.folder.dir.queryPermission({ mode: 'readwrite' });
+  } catch {
+    /* treated as denied */
+  }
+  if (permission === 'granted' && folderRetries < FOLDER_RETRIES) {
+    folderRetries += 1;
+    await new Promise((r) => setTimeout(r, 2000 * folderRetries));
+    if (stopping) return;
+    try {
+      await openPart(task.folder.part, true);
+      recovering = false;
+      post({ type: 'folder-retry', error: `${err?.name || 'Error'}: ${err?.message || err}`, segments: segments.map(({ id, start, end, pos }) => ({ id, start, end, pos })) });
+      schedule();
+      return;
+    } catch (again) {
+      err = again;
+    }
+  }
+  recovering = false;
+  fail('folder', permission === 'granted' ? err : new Error(`permission-${permission}`));
+}
+
 function schedule() {
   if (stopping || finished) return;
   if (segments.length && totalRemaining(segments) === 0 && conns.size === 0) {
@@ -524,8 +609,16 @@ async function runConn(seg, resp = null, ac = new AbortController(), pool = null
       conn.bytes = (conn.bytes || 0) + chunk.byteLength;
       if (chunk.byteLength) {
         const writing = handle.write(chunk, seg.pos);
-        if (writing) await writing.catch((err) => fail('folder', err));
-        if (stopping) break;
+        if (writing) {
+          let failed = false;
+          await writing.catch((err) => {
+            failed = true;
+            onFolderError(err);
+          });
+          if (failed) break;
+          sinceCommit += chunk.byteLength;
+        }
+        if (stopping || recovering) break;
         seg.pos += chunk.byteLength;
         src.bytes += chunk.byteLength;
         failures = 0;
@@ -552,7 +645,7 @@ async function runConn(seg, resp = null, ac = new AbortController(), pool = null
     if (seg.pos < seg.end) throw new Error('Connection closed early');
   } catch (err) {
     // 'slow': dropped on purpose; its piece is picked up again right away.
-    if (stopping || ac.signal.reason === 'shrink' || ac.signal.reason === 'done' || ac.signal.reason === 'slow') return;
+    if (stopping || recovering || ac.signal.reason === 'folder' || ac.signal.reason === 'shrink' || ac.signal.reason === 'done' || ac.signal.reason === 'slow') return;
     if (err instanceof PoolError) {
       omitPool = 'bad'; // retried right away from the cookie pool
       return;
@@ -621,7 +714,15 @@ async function finish() {
   let verified = null;
   try {
     if (task.size != null) handle.truncate(task.size);
-    await handle.close();
+    try {
+      await handle.close();
+    } catch (err) {
+      if (!task.folder) throw err;
+      // The last writes didn't reach the folder: get them again.
+      finished = false;
+      beginTicking();
+      return onFolderError(err);
+    }
     handle = null;
     if (task.checksum) {
       verified = await verify();
@@ -694,11 +795,11 @@ async function stop(type) {
     await handle.discard();
     handle = null;
   }
-  await closeHandle();
+  const kept = await closeAndReport();
   post({
     type,
-    downloaded: downloadedBytes(segments),
-    segments: segments.map(({ id, start, end, pos }) => ({ id, start, end, pos })),
+    downloaded: downloadedBytes(kept),
+    segments: kept,
     stats: controller ? stats() : null,
   });
 }
@@ -709,21 +810,33 @@ async function fail(code, err) {
   clearInterval(ticker);
   for (const c of conns.values()) c.ac.abort('stop');
   conns.clear();
-  await closeHandle();
+  const kept = await closeAndReport();
   post({
     type: 'error',
     code,
-    message: String(err?.message || err),
-    segments: segments.map(({ id, start, end, pos }) => ({ id, start, end, pos })),
+    message: errorText(err),
+    segments: kept,
   });
 }
 
+// False if the file could not be closed: for the folder that means the
+// writes since the last commit never reached it.
 async function closeHandle() {
   const h = handle;
   handle = null;
   try {
     await h?.close();
+    return true;
   } catch {
-    /* already closed, or the folder went away */
+    return false;
   }
 }
+
+// The pieces as they are on disk now.
+async function closeAndReport() {
+  const ok = await closeHandle();
+  const out = task.folder && !ok && committed ? committed : segments;
+  return out.map(({ id, start, end, pos }) => ({ id, start, end, pos }));
+}
+
+const errorText = (err) => (err?.name && err.name !== 'Error' ? `${err.name}: ${err.message}` : String(err?.message || err));
