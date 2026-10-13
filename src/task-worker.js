@@ -13,6 +13,7 @@ import {
   totalRemaining,
   downloadedBytes,
   splitLargest,
+  missingRanges,
   RateLimiter,
 } from './scheduler.js';
 import { parseContentRange, pickFilename, isThrottleStatus, applyRename } from './http.js';
@@ -101,7 +102,13 @@ class OpfsFile {
     this.h = h;
   }
   write(data, at) {
-    this.h.write(data, { at });
+    // A short write would leave a hole that is counted as downloaded.
+    let done = 0;
+    while (done < data.byteLength) {
+      const n = this.h.write(data.subarray(done), { at: at + done });
+      if (!(n > 0)) throw new Error(`wrote ${done} of ${data.byteLength} bytes`);
+      done += n;
+    }
   }
   truncate(size) {
     this.h.truncate(size);
@@ -431,7 +438,15 @@ function replaceSlow(now) {
 
 function schedule() {
   if (stopping || finished) return;
-  if (segments.length && totalRemaining(segments) === 0 && conns.size === 0) return finish();
+  if (segments.length && totalRemaining(segments) === 0 && conns.size === 0) {
+    // Never save a file with a hole in it: if the pieces don't cover every
+    // byte, download what is missing first.
+    const gaps = task.rangeSupported && Number.isFinite(task.size) ? missingRanges(segments, task.size) : [];
+    if (!gaps.length) return finish();
+    console.warn('missing ranges before saving', gaps);
+    let id = segments.reduce((max, s) => Math.max(max, s.id), -1);
+    for (const [start, end] of gaps) segments.push({ id: ++id, start, end, pos: start });
+  }
   if (!task.rangeSupported) return;
 
   const now = Date.now();

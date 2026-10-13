@@ -107,6 +107,33 @@
   "errSave": {
     "message": "保存文件失败"
   },
+  "saveWriteFailed": {
+    "message": "Chrome 写入磁盘出错"
+  },
+  "saveReadFailed": {
+    "message": "读取已下载的数据出错"
+  },
+  "saveTransient": {
+    "message": "系统多次拒绝写入，常见于杀毒软件或网盘同步占用文件；在设置里选一个保存文件夹可以跳过这一步"
+  },
+  "saveNoSpace": {
+    "message": "磁盘空间不足"
+  },
+  "saveDenied": {
+    "message": "没有写入下载文件夹的权限"
+  },
+  "saveNameTooLong": {
+    "message": "文件名太长"
+  },
+  "saveTooLarge": {
+    "message": "文件太大，这个磁盘放不下单个这么大的文件"
+  },
+  "saveBlocked": {
+    "message": "被安全软件拦截"
+  },
+  "saveCanceled": {
+    "message": "在 Chrome 下载列表里被取消"
+  },
   "errRangeUnsupported": {
     "message": "服务器上的文件已变化，请重新下载"
   },

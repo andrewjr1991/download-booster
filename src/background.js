@@ -362,6 +362,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return false;
 });
 
+const SAVE_RESUMES = 3; // times one save is continued after Chrome interrupts it
+
 async function saveFile({ id, url, filename }) {
   const download = (name) => chrome.downloads.download({ url, filename: name, conflictAction: 'uniquify', saveAs: false });
   let downloadId;
@@ -381,15 +383,33 @@ chrome.downloads.onChanged.addListener(async (delta) => {
   const state = delta.state?.current;
   if (state !== 'complete' && state !== 'interrupted') return;
   const key = `save:${delta.id}`;
-  const { [key]: taskId } = await chrome.storage.session.get(key);
+  const triesKey = `saveTries:${delta.id}`;
+  const { [key]: taskId, [triesKey]: tries = 0 } = await chrome.storage.session.get([key, triesKey]);
   if (!taskId) return;
-  await chrome.storage.session.remove(key);
-  if (state === 'complete') {
-    await engine('saved', { id: taskId, downloadId: delta.id });
-  } else {
+  if (state === 'interrupted') {
+    // Writing to disk failed part-way (on Windows often an antivirus or a
+    // sync tool holding the file: FILE_TRANSIENT_ERROR). Continue the same
+    // download where it stopped, a few times, before giving up on it.
     const [item] = await chrome.downloads.search({ id: delta.id });
+    if (item?.canResume && item.error !== 'USER_CANCELED' && tries < SAVE_RESUMES) {
+      await chrome.storage.session.set({ [triesKey]: tries + 1 });
+      await new Promise((r) => setTimeout(r, 2000 * (tries + 1)));
+      try {
+        await chrome.downloads.resume(delta.id);
+        return;
+      } catch (err) {
+        console.warn('could not resume saving', err);
+      }
+    }
+    await chrome.storage.session.remove([key, triesKey]);
+    // The engine starts a fresh copy or reports the error; this entry would
+    // only add a "failed" line to Chrome's download list.
+    if (item?.error !== 'USER_CANCELED') chrome.downloads.erase({ id: delta.id }).catch(() => {});
     await engine('save-failed', { id: taskId, error: item?.error || 'interrupted' });
+    return;
   }
+  await chrome.storage.session.remove([key, triesKey]);
+  await engine('saved', { id: taskId, downloadId: delta.id });
 });
 
 // ---- Referer for anti-hotlinking -------------------------------------------------

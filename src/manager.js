@@ -191,9 +191,11 @@ function drawBar(canvas, task) {
     const fw = ((s.pos - s.start) / size) * w;
     ctx.fillRect(x, 0, Math.max(fw, 0), h);
   }
+  // A thin line marks where a piece still being downloaded begins. Finished
+  // pieces join into one bar: lines between them read as holes in the file.
   ctx.fillStyle = css.getPropertyValue('--card');
   for (const s of task.segments || []) {
-    if (s.start > 0) ctx.fillRect((s.start / size) * w - 0.5, 0, 1, h);
+    if (s.start > 0 && s.pos < s.end) ctx.fillRect((s.start / size) * w - 0.5, 0, 1, h);
   }
 }
 

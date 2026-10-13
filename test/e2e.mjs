@@ -868,6 +868,69 @@ await check('mirrors: pieces come from every address that has the same file, a b
   return `${done.mirrors.map((m) => `${m.host}: ${m.bad ? 'dropped' : `${(m.bytes / 1048576).toFixed(1)} MB`}`).join(', ')}; peak ${peak} connections (2 per server)`;
 });
 
+// Chrome can't write to the Downloads folder while it is a plain file.
+function breakDownloads() {
+  const moved = `${downloadDir}-moved`;
+  fs.renameSync(downloadDir, moved);
+  fs.writeFileSync(downloadDir, 'not a folder');
+  let fixed = false;
+  return () => {
+    if (fixed) return;
+    fixed = true;
+    fs.rmSync(downloadDir, { force: true });
+    fs.renameSync(moved, downloadDir);
+  };
+}
+const chromeItems = () => page.evaluate(() => chrome.downloads.search({}));
+
+await check('saving: a save Chrome interrupts is continued once writing works again', async () => {
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6 });
+  await engine('set-limit', { maxActive: 3, speedLimit: 0 });
+  const before = new Set((await chromeItems()).map((i) => i.id));
+  const fix = breakDownloads();
+  try {
+    const { id } = await engine('add', { url: `${srv.url}/file.bin?save=1`, maxConnections: 6 });
+    // Let Chrome fail to write it, then make writing work again.
+    await waitTask(id, (x) => x.status === 'saving');
+    await sleep(1500);
+    fix();
+    const done = await waitTask(id, (x) => x.status === 'completed');
+    const { hash } = await savedFileHash(done.downloadId);
+    if (hash !== srv.sha256) throw new Error('hash mismatch');
+    const mine = (await chromeItems()).filter((i) => !before.has(i.id));
+    if (mine.some((i) => i.state !== 'complete')) throw new Error(`left in Chrome's list: ${mine.map((i) => i.state)}`);
+    return `${mine.length === 1 && mine[0].id === done.downloadId ? 'the same download was continued' : 'saved again'}, ${mine.length} entry in Chrome's list`;
+  } finally {
+    fix();
+  }
+});
+
+await check('saving: if writing keeps failing, the reason is shown and retrying saves without downloading again', async () => {
+  const before = new Set((await chromeItems()).map((i) => i.id));
+  const fix = breakDownloads();
+  try {
+    const { id } = await engine('add', { url: `${srv.url}/file.bin?save=2`, maxConnections: 6 });
+    await waitTask(id, (t) => t.status === 'error' || t.status === 'completed', 180000).catch(() => {});
+    fix();
+    const t = (await engine('list')).tasks.find((x) => x.id === id);
+    if (t.status !== 'error' || t.error?.code !== 'save') throw new Error(`ended ${t.status} ${JSON.stringify(t.error)}`);
+    const shown = await page.evaluate(async (t) => (await import('./client.js')).statusText(t), t);
+    if (!shown.includes('(')) throw new Error(`shown as "${shown}"`);
+    const left = (await chromeItems()).filter((i) => !before.has(i.id));
+    if (left.length) throw new Error(`${left.length} failed entries left in Chrome's list`);
+    const mark = srv.log.length;
+    await engine('resume', { id });
+    const done = await waitTask(id, (x) => x.status === 'completed');
+    const { hash } = await savedFileHash(done.downloadId);
+    if (hash !== srv.sha256) throw new Error('hash mismatch');
+    const refetched = srv.log.slice(mark).filter((l) => l.path === '/file.bin' && !/^bytes=0-0$/.test(l.range || '')).length;
+    if (refetched) throw new Error(`${refetched} requests after retrying the save`);
+    return `"${shown}", no failed entries left in Chrome's list; retry saved it without new requests`;
+  } finally {
+    fix();
+  }
+});
+
 await check('small files are left to the browser', async () => {
   await setSettings({ autoTakeover: true, minSizeMB: SIZE_MB + 1, maxConnections: 6 });
   const before = (await engine('list')).tasks.map((t) => t.id);
@@ -888,6 +951,8 @@ await check('small files are left to the browser', async () => {
 
 await page.screenshot({ path: path.join(EXT, 'test', 'manager-screenshot.png'), fullPage: true });
 await ctx.close();
+fs.rmSync(downloadDir, { recursive: true, force: true });
+fs.rmSync(userDir, { recursive: true, force: true });
 srv.server.close();
 h2.server.close();
 fs.writeFileSync(path.join(EXT, 'test', 'last-e2e.json'), JSON.stringify(results, null, 2));

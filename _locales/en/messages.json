@@ -107,6 +107,33 @@
   "errSave": {
     "message": "Could not save the file"
   },
+  "saveWriteFailed": {
+    "message": "Chrome could not write it to disk"
+  },
+  "saveReadFailed": {
+    "message": "reading the downloaded data failed"
+  },
+  "saveTransient": {
+    "message": "the system kept refusing to write the file, often an antivirus or a sync tool holding it; choosing a download folder in Settings avoids this step"
+  },
+  "saveNoSpace": {
+    "message": "disk full"
+  },
+  "saveDenied": {
+    "message": "no permission to write to the Downloads folder"
+  },
+  "saveNameTooLong": {
+    "message": "file name too long"
+  },
+  "saveTooLarge": {
+    "message": "file too large for this disk"
+  },
+  "saveBlocked": {
+    "message": "blocked by security software"
+  },
+  "saveCanceled": {
+    "message": "cancelled in Chrome downloads"
+  },
   "errRangeUnsupported": {
     "message": "The file changed on the server; please download it again"
   },
