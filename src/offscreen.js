@@ -231,7 +231,10 @@ function pump() {
 
 async function startWorker(t) {
   workers.get(t.id)?.terminate();
-  const direct = t.folder && t.kind === 'file';
+  // Only a download started by an older version writes straight into the
+  // folder; it carries on there. New ones are put together in the browser's
+  // storage and copied into the folder at the end (see save()).
+  const direct = t.folder && t.kind === 'file' && !!t.folderPart;
   const script = t.kind === 'hls' ? './hls-worker.js' : './task-worker.js';
   const w = new Worker(new URL(script, import.meta.url), { type: 'module' });
   workers.set(t.id, w);
@@ -465,14 +468,11 @@ async function save(t) {
   setStatus(t, 'saving');
   try {
     const file = await getOpfsFile(t);
-    // A download folder is set: copy it there (HLS streams and recordings
-    // are put together in the browser's storage first).
-    if (t.folder && (await folderPermission(t.folder)) === 'granted') {
-      const name = await uniqueName(t.folder, t.filename || 'download');
-      await copyInto(t.folder, name, file);
-      Object.assign(t, { filename: name, savedTo: `${t.folder.name}/${name}` });
-      return onSaved(t, null);
-    }
+    // A download folder is set: copy the finished file there. Writing into
+    // the folder while downloading lost everything since the last pause when
+    // the browser stopped allowing writes part-way; a copy that fails can
+    // simply be retried.
+    if (t.folder) return await saveToFolder(t, file);
     // OPFS files have no type, and Chrome then treats the blob as text/plain:
     // on Windows that renames "video.mp4" to "video.txt". Give it a real one.
     if (blobUrls.has(t.id)) URL.revokeObjectURL(blobUrls.get(t.id));
@@ -490,6 +490,32 @@ async function save(t) {
   } catch (err) {
     setStatus(t, 'error', { code: 'save', message: String(err?.message || err) });
   }
+}
+
+async function saveToFolder(t, file) {
+  // The folder picked in Settings now: picking it again (or another one)
+  // after a failed save is how the user fixes it.
+  t.folder = (await getFolder().catch(() => null)) || t.folder;
+  const permission = await folderPermission(t.folder);
+  if (permission !== 'granted') {
+    return setStatus(t, 'error', { code: 'folder', message: `permission-${permission}` });
+  }
+  let lastErr;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const name = await uniqueName(t.folder, t.filename || 'download');
+      await copyInto(t.folder, name, file);
+      Object.assign(t, { filename: name, savedTo: `${t.folder.name}/${name}` });
+      return onSaved(t, null);
+    } catch (err) {
+      lastErr = err;
+      console.warn('copying into the download folder failed', err);
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
+  const permissionNow = await folderPermission(t.folder);
+  const message = permissionNow !== 'granted' ? `permission-${permissionNow}` : `${lastErr?.name || 'Error'}: ${lastErr?.message || lastErr}`;
+  setStatus(t, 'error', { code: 'folder', message });
 }
 
 // The background turns these into declarativeNetRequest rules that add the

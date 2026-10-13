@@ -97,6 +97,11 @@ export function statusText(task) {
   if (task.status === 'downloading' && task.verifying) return t('statusVerifying', [`${Math.floor((task.verifying.done / (task.verifying.size || 1)) * 100)}%`]);
   if (task.status !== 'error' || !task.error) return t(STATUS[task.status] || 'statusQueued');
   const text = `${t('statusError')}: ${t(ERRORS[task.error.code] || 'errEngine')}`;
+  if (task.error.code === 'folder') {
+    const m = task.error.message || '';
+    if (/^permission-/.test(m)) return `${text} (${t('folderNeedsGrant')})`;
+    return m && !/^No permission/.test(m) ? `${text} (${m})` : text;
+  }
   if (task.error.code !== 'save' || !/^[A-Z_]+$/.test(task.error.message || '')) return text;
   const reason = SAVE_REASONS[task.error.message];
   return `${text} (${reason ? t(reason) : task.error.message})`;

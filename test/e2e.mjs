@@ -762,38 +762,42 @@ const folderFiles = () =>
     return out;
   });
 
-await check('download folder: a file is written straight into the picked folder', async () => {
+await check('download folder: a finished file is saved into the picked folder', async () => {
   await pickFolder(true);
   await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6 });
   await engine('set-limit', { maxActive: 3, speedLimit: 0 });
   const { id } = await engine('add', { url: `${srv.url}/file.bin`, maxConnections: 6 });
   await waitTask(id, (t) => t.downloaded > srv.size * 0.3);
   const during = Object.keys(await folderFiles());
-  if (!during.includes('picked/test-40MB.bin.part')) throw new Error(`while downloading: ${during}`);
-  if (during.some((n) => n.startsWith('downloads/'))) throw new Error(`also in the browser's storage: ${during}`);
+  if (during.some((n) => n.startsWith('picked/'))) throw new Error(`in the folder while downloading: ${during}`);
   const done = await waitTask(id, (t) => t.status === 'completed');
   const files = await folderFiles();
   if (files['picked/test-40MB.bin']?.hash !== srv.sha256) throw new Error(`saved: ${JSON.stringify(Object.keys(files))}`);
   if (Object.keys(files).length !== 1) throw new Error(`left over: ${Object.keys(files)}`);
   if (done.savedTo !== 'picked/test-40MB.bin' || done.downloadId != null) throw new Error(`savedTo ${done.savedTo}, downloadId ${done.downloadId}`);
-  return `written as test-40MB.bin.part while downloading, nothing in the browser's storage, saved ${done.savedTo}`;
+  return `kept in the browser while downloading, saved ${done.savedTo}, nothing left behind`;
 });
 
-await check('download folder: pausing keeps the progress in the .part file, a second copy gets a new name', async () => {
-  const { id } = await engine('add', { url: `${srv.url}/file.bin`, maxConnections: 6 });
+await check('download folder: if the folder cannot be written, the reason is shown and retrying saves without downloading again', async () => {
+  const { id } = await engine('add', { url: `${srv.url}/file.bin?folder=gone`, maxConnections: 6 });
   await waitTask(id, (t) => t.downloaded > srv.size * 0.3);
-  await engine('pause', { id });
-  const paused = await waitTask(id, (t) => t.status === 'paused');
-  const part = (await folderFiles())['picked/test-40MB (1).bin.part'];
-  if (!part || part.size !== srv.size) throw new Error(`no committed .part after pausing: ${JSON.stringify(await folderFiles())}`);
-  const before = srv.log.length;
+  // The folder disappears while downloading (deleted, a drive unplugged).
+  await page.evaluate(async () => (await navigator.storage.getDirectory()).removeEntry('picked', { recursive: true }));
+  const failed = await waitTask(id, (t) => t.status === 'error' || t.status === 'completed', 60000).catch((e) => e);
+  const t = (await engine('list')).tasks.find((x) => x.id === id);
+  if (t.status !== 'error' || t.error?.code !== 'folder') throw new Error(`ended ${t.status} ${JSON.stringify(t.error)} ${failed}`);
+  const shown = await page.evaluate(async (t) => (await import('./client.js')).statusText(t), t);
+  if (!/NotFoundError/.test(shown)) throw new Error(`shown as "${shown}"`);
+  // Pick a folder again and retry: only the saving is repeated.
+  await pickFolder(true);
+  const mark = srv.log.length;
   await engine('resume', { id });
-  const done = await waitTask(id, (t) => t.status === 'completed');
-  const fromStart = srv.log.slice(before).filter((l) => /^bytes=0-(?!0$)/.test(l.range || '')).length;
-  if (fromStart) throw new Error('started again from the beginning');
+  const done = await waitTask(id, (x) => x.status === 'completed');
   const files = await folderFiles();
-  if (done.savedTo !== 'picked/test-40MB (1).bin' || files['picked/test-40MB (1).bin']?.hash !== srv.sha256) throw new Error(`saved ${done.savedTo}: ${JSON.stringify(Object.keys(files))}`);
-  return `paused at ${((paused.downloaded / srv.size) * 100).toFixed(0)}%, resumed from there, saved ${done.savedTo}`;
+  if (files['picked/test-40MB.bin']?.hash !== srv.sha256) throw new Error(`saved: ${JSON.stringify(Object.keys(files))}`);
+  const refetched = srv.log.slice(mark).filter((l) => l.path === '/file.bin' && !/^bytes=0-0$/.test(l.range || '')).length;
+  if (refetched) throw new Error(`${refetched} requests after retrying`);
+  return `"${shown}"; after picking the folder again, retry saved ${done.savedTo} without new requests`;
 });
 
 await check('download folder: removing an unfinished download deletes its .part file', async () => {
