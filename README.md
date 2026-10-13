@@ -1,139 +1,89 @@
-# 下载加速器（Download Booster）· 第一阶段原型
+<p align="center">
+  <img src="docs/store/icon-512.png" width="96" alt="">
+</p>
 
-纯插件模式的 MVP：Manifest V3 扩展，用多连接分段下载大文件，无需安装其他软件。名字是暂定的。
+<h1 align="center">Download Booster</h1>
 
-![工具栏弹窗](docs/popup-zh.png) ![下载管理页](docs/screenshot-zh.png)
+<p align="center">
+  A browser extension for multi-connection downloads: fill your bandwidth on large files without installing a download manager.
+  <br>
+  English · <a href="README.zh-CN.md">简体中文</a>
+</p>
 
-## 试用方法（Chrome / Edge）
+![Download manager](docs/store/en/1-downloads.png)
 
-1. 下载 `download-booster.zip` 并解压到一个文件夹（或直接用本目录）。
-2. 打开 `chrome://extensions`（Edge 为 `edge://extensions`），打开右上角“开发者模式”。
-3. 点“加载已解压的扩展程序”，选择包含 `manifest.json` 的文件夹。
-4. 五种用法：
-   - 点工具栏图标打开小弹窗：列出本页加载过的视频、音频、图片和 m3u8，勾选后下载；也能看到下载进度（图标上的绿色数字是本页发现的音视频数量）；
-   - 像平时一样下载大文件（默认大于 20 MB），插件会自动接管，并打开下载管理页；
-   - 在链接上右键，选“用下载加速器下载”；
-   - 在网页空白处右键，选“嗅探本页的下载链接”，在列表里勾选要下的文件；
-   - 在下载管理页（弹窗右上角进入）粘贴链接，可以一次粘贴多个，每行一个。
-5. 完成后文件出现在浏览器的默认下载目录，管理页里点“打开所在位置”。
+## Features
 
-界面语言跟随浏览器语言（中文或英文）。设置在管理页底部：自动接管开关、接管阈值、每个任务的最多连接数、同时下载的任务数、总速度上限。
+**Faster downloads**
 
-## 已实现
+- Every file starts with up to 6 connections, each downloading its own piece; fewer only when the server refuses more, and they are added back later
+- Slow connections are spotted and replaced, and the last pieces are split finer so a download doesn't crawl at the end
+- Pause, resume and automatic retries, also after closing the browser
+- Every byte is checked before the file is saved; any gap is downloaded first
+- Optional mirrors: other addresses of the same file share the work
+- Optional MD5 / SHA-1 / SHA-256 check when the download finishes
 
-| 设计文档 MVP 项 | 状态 |
+**Videos, audio and images on a page**
+
+- The toolbar button lists the videos, audio, images and m3u8 / DASH playlists a page has loaded, including ones the player fetches in the background with no link on the page
+- Preview before downloading, select several and download them together
+- m3u8 (HLS) and DASH: pick a quality; pieces download in parallel, AES-128 encrypted pieces are decrypted, and video and audio are joined into one file
+- Record a video that plays from a `blob:` address and save it as MP4
+
+**Your way**
+
+- Takes over browser downloads above a size you choose, or only the ones you send to it
+- Global speed limit and number of downloads at once
+- Save straight into a folder you pick
+- Collect every link on a page, filter by type, download in bulk and rename by a pattern
+- English and Chinese, following the browser's language
+
+| Media on a page | Picking an m3u8 quality |
 | --- | --- |
-| 接管下载：右键菜单 + 自动接管（> 20 MB，可调） | 已完成 |
-| 连接数：一开始就开到设置的上限（默认 6 个）并保持；服务器回 429/503，或在其他连接正常时拒绝新连接，才减 1 个，30 秒后再加回（每次被拒等待时间翻倍，最长 4 分钟）。早先的"逐档测速再加连接"在速度波动大的服务器上会停在 2 个连接，已弃用 | 已完成 |
-| 动态分段：空闲连接切走最大剩余分段的后一半 | 已完成 |
-| 不支持 Range 时退回单连接 | 已完成 |
-| 暂停 / 继续 / 失败自动重试（指数退避，429/503 自动降并发）；浏览器重启后自动用 `If-Range` 续传 | 已完成 |
-| 下载管理页：进度、实时速度、分段可视化、剩余时间、打开所在位置、中英双语 | 已完成 |
-| 内置测速对比：单连接速度 vs 平均速度 | 已完成 |
-| 防盗链：接管或右键下载时，把来源页面作为 Referer 加到每个分段请求上（`declarativeNetRequest` 会话规则，只作用于本插件自己的请求） | 已完成 |
-| 任务队列：同时下载的任务数可调（默认 3），其余排队，按添加顺序依次开始；浏览器重启后也按队列恢复 | 已完成 |
-| HTTP/2 站点开出第二条 TCP 连接：分段请求轮流使用“带 Cookie”和“不带 Cookie”两个连接池（Chrome 对这两类请求分开建连接）；不带 Cookie 拿不到同一个文件时自动只用带 Cookie 的 | 已完成 |
-| 保存前核对所有分段确实覆盖整个文件，有缺口就先补下；Chrome 把文件存到下载文件夹时中途失败会自动重试 2 次，仍失败就显示原因（磁盘空间不足、写入出错、被安全软件拦截等），点“重试”只重新保存、不重新下载 | 已完成 |
-| 卡住的连接（15 秒没有数据）自动重连；调试视图（`src/manager.html?debug`）显示协议和各连接数下的平均速度 | 已完成 |
-| 稳定后继续双向复查：每 20 秒试多 1 个连接，每 60 秒试少 1 个连接，少 1 个也差不多快（≥95%）就减下来 | 已完成 |
-| 全局限速：设置所有下载合计的速度上限（默认不限速），由正在下载的任务平分。管理页顶部显示总速度和当前限速 | 已完成 |
-| 音视频图片嗅探：用 `webRequest` 记录每个标签页实际加载过的视频、音频、图片（小于 10 KB 的图标不算）和 m3u8/mpd 播放列表，包括播放器在后台请求、页面上没有链接的视频；按大小排序，去掉播放器分段请求造成的重复 | 已完成 |
-| m3u8（HLS）下载合并：弹窗里选清晰度，显示时长、分片数和是否加密；多个分片同时下载（遵守全局限速），AES-128 加密的分片自动解密，按顺序合并成一个 .ts（fMP4 流合并成 .mp4），文件名取网页标题；分片在其他域名（CDN）时同样带页面 Referer；暂停后从已合并的分片继续。音轨单独的流（画面和声音分成两个 m3u8）会把选中的音轨一起下载：fMP4/CMAF 流合成一个带声音的 .mp4，MPEG-TS 流把音轨另存为“文件名-audio”放在视频旁边。直播流和 DRM（SAMPLE-AES）加密的视频不支持 | 已完成 |
-| DASH（.mpd）下载合并：和 m3u8 一样在弹窗里选清晰度，画面和默认音轨（标为 main 的语言，否则第一个）分别下载后合成一个 .mp4。支持 SegmentTemplate（$Number$ / $Time$ / SegmentTimeline）、SegmentList（字节范围）和单文件 SegmentBase（从文件里的 sidx 索引读出分片）。WebM 的 DASH 流不能合成，音轨另存。直播和 DRM 加密的不支持 | 已完成 |
-| 保存到指定文件夹：下载管理页设置里“保存位置”选一个文件夹（“下载”里的子文件夹）后，普通文件边下边直接写进去（完成前叫“文件名.part”，完成后改名，重名自动加 (1)），大文件只占一份空间；m3u8 和录制的视频合成后复制进去。Chrome 写文件夹要关闭文件才算真正存下，所以每下 256 MB（文件更大时为已存部分的一半）存一次进度。中途被拒绝写入（Windows 上杀毒或同步软件占用文件等）时，回到上次存的地方重新打开文件接着下，最多自动重试 3 次；文件夹权限被收回时停下并说明原因，点“允许访问”再点“重试”从上次存的地方继续。失败时显示浏览器给出的具体错误 | 已完成 |
-| 下载校验和镜像：下载管理页“校验值和镜像地址”里可填 MD5 / SHA-1 / SHA-256（下完后流式读一遍核对，大文件不占内存；不一致就不保存，重试会重新下载），以及同一文件的其他地址：大小一致的镜像一起分担分段（每个服务器各自的连接数上限），出错或大小不同的镜像自动弃用；任务里显示每个地址下了多少 | 已完成 |
-| 快慢不均的连接：同一个地址的不同连接速度可能差几十倍。每个连接单独测速，比最快的慢 5 倍以上、还要很久才下完的连接会被换成新连接重下它那段；空出来的连接优先分担“预计最晚下完”的那段；最后 32 MB 拆得更细；总速度掉到原来 30% 以下持续 8 秒就重新测速、重新加连接（设了限速时不算） | 已完成 |
-| 录制 blob 视频：页面用 MediaSource 播放（地址是 `blob:`、没法直接下载）时，弹窗出现“录制”卡片。开始录制会刷新页面，在页面里拦截播放器喂给 MediaSource 的数据（只在录制期间注入脚本，录完就撤掉），交给扩展内部的隐藏页写入扩展存储；默认静音 16 倍速播放让播放器尽快加载完。播放器加载到结尾时自动保存，也可以随时“停止并保存”。分开的视频轨和音轨合成一个 mp4（fMP4 封装，H.264/AAC、VP9/Opus 都可以）；WebM 等其他封装按轨道分别保存。DRM 加密的视频会提示无法录制；YouTube 不提供录制 | 已完成 |
-| 批量管理：设置里可以自定义嗅探规则（额外的视频/音频/图片扩展名，图片最小大小，忽略包含某些关键词的地址），弹窗和“本页链接”都按规则识别；弹窗和“本页链接”都能一键复制选中的链接；“本页链接”批量下载时可以填重命名规则，如 `{title}_{n}`（可用 {name} 原名、{n} 序号、{title} 网页标题、{host} 网站、{date} 日期），下载前预览新文件名，原扩展名按服务器实际返回的保留 | 已完成 |
-| 下载前预览：弹窗里点资源可看大图、直接播放音频和视频（显示时长、分辨率），可上一个/下一个切换、选中或下载；预览请求同样带页面 Referer，防盗链的图片也能显示 | 已完成 |
-| 工具栏弹窗：本页资源（按视频/音频/流媒体/图片分类，图片显示缩略图网格）、下载任务进度和暂停/继续、进入下载管理页、嗅探本页所有链接 | 已完成 |
-| 批量下载：一次粘贴多个链接；右键“嗅探本页的下载链接”收集页面（含所有 iframe）里的链接和音视频地址，加上网页实际加载过的音视频、图片和 m3u8（带大小、图片缩略图，可预览；m3u8 下载时自动合并），按视频/音频/流媒体/压缩包/程序/镜像/文档/图片/其他分类筛选、搜索、勾选后一起加入队列，来源页作为 Referer | 已完成 |
+| ![Media on a page](docs/store/en/2-sniff.png) | ![m3u8](docs/store/en/3-m3u8.png) |
 
-## 测试结果（本地限速服务器，每个请求 2 MB/s，模拟 nginx `limit_rate`）
+## Install
 
-运行 `node test/e2e.mjs`（`SIZE_MB=100`），在 Chromium 中加载本扩展，25/25 通过，下载的文件 SHA-256 全部一致：
+**From the store:** [Chrome Web Store](https://chromewebstore.google.com/detail/chgjgofmencmbmacnllicfamakifofnh) (in review). Edge can install it from the Chrome Web Store too.
 
-| 场景 | 结果 |
-| --- | --- |
-| 单连接基线 | 2.0 MB/s |
-| 多连接 | 每个连接限速的服务器上直接开 6 个连接，不再逐档爬坡 |
-| 每个请求首字节延迟 1.5 秒（模拟远程 CDN） | 仍能加到 6 个连接，平均 4.3 MB/s |
-| 服务器不支持 Range | 自动单连接，2.0 MB/s |
-| 每 4 个请求返回一次 503 | 降一档并冷却 30 秒后再试探，峰值 4 连接，完成 |
-| 下载到 27% 时暂停再继续 | 续传请求带 `If-Range`，文件完整 |
-| 普通点击下载 100 MB 文件 | 被接管，原生下载已取消 |
-| 小于阈值的文件 | 交还浏览器，原生下载正常进行 |
-| 同时下载上限设为 2，连续添加 3 个任务 | 最多 2 个同时下载，第 3 个排队，之后全部完成 |
-| 校验 Referer 的防盗链文件 | 接管后每个分段请求都带上来源页 Referer，下载成功 |
-| HTTP/2 服务器，每条 TCP 连接限速 2 MB/s | 旧版始终 1 条连接 1.9 MB/s；现在用两个连接池开出 2 条，2 个连接时实测 4.0 MB/s |
-| 必须带登录 Cookie 才能下载的文件 | 不带 Cookie 的请求被拒后自动停用该连接池，下载正常完成 |
-| 粘贴 2 个有效链接、1 行无效文字和 1 个重复链接 | 正好添加 2 个任务 |
-| 两个任务同时下载，总限速 1.5 MB/s | 合计 1.5 MB/s；解除限速 4 秒后升到 5.0 MB/s，文件完整 |
-| 页面播放 `video/mp4`、显示两张图片（50 KB 和 2 KB）、请求一个 m3u8 和一个 .ts 分片 | 弹窗列出视频、流媒体、图片各 1 个，图标和 .ts 分片被过滤；点下载后视频完整保存 |
-| 页面有一段 1 秒的 WAV 和一张校验 Referer 的 BMP | 弹窗里音频可播放并显示 0:01；图片缩略图和大图都能加载，显示 200×150；在预览里选中后批量按钮计数为 1 |
-| m3u8 有 1080p 和 360p 两档，8 个 AES-128 加密分片放在另一个域名，没有页面 Referer 返回 403 | 弹窗列出两档清晰度；选 1080p 下载，8 个分片各请求一次，合并后与原视频 SHA-256 一致，保存为“网页标题.ts” |
-| 同一个 m3u8 下到 2/8 个分片时暂停再继续 | 只再请求剩下的 6 个分片，文件完整 |
-| m3u8 画面和声音分开（fMP4/CMAF，VP9 视频 + Opus 音轨，另有一个不该下载的非默认音轨） | 只下载默认音轨，合成一个 mp4，与离线合并结果逐字节一致 |
-| 同上，下到音轨时暂停再继续 | 视频分片不再重复请求，结果仍一致 |
-| m3u8 画面和声音分开（MPEG-TS + AAC） | 保存“标题.ts”和“标题-audio.aac”两个文件，内容都正确 |
-| 用 ffmpeg 生成的 720p H.264 + AAC 音画分离 CMAF 流，在弹窗里下载 | 保存为一个 mp4，ffprobe 显示 h264 1280×720 和 aac 两条轨道、各 24 秒，ffmpeg 完整解码无错误 |
-| 页面加载一个 DASH .mpd（SegmentTemplate，两档画质 + 两种语言） | 弹窗列出两档清晰度和“+ 音轨”；下载只取最高画质和默认语言，合成的 mp4 与离线合并结果逐字节一致 |
-| DASH 用 SegmentList 字节范围 / 每轨一个文件（SegmentBase + sidx） | 都合成同样的 mp4，逐字节一致；单文件的分片从 sidx 索引读出、多个分片并发下载 |
-| 用 ffmpeg 生成的 720p/360p H.264 + AAC DASH 流（模板分片和单文件两种），在弹窗里下载 | 都保存为一个 mp4，ffprobe 显示 h264 1280×720 + aac、各 24 秒，ffmpeg 完整解码无错误 |
-| 设置了下载文件夹后下载 40 MB 文件 | 下载中文件夹里只有“文件名.part”，浏览器内部存储里没有副本；完成后改名为原文件名，内容一致，不进浏览器下载列表 |
-| 同一文件再下一次，下到 35% 暂停再继续 | 暂停后 .part 已有数据；继续时不从头下载；保存为“test-40MB (1).bin”，内容一致 |
-| 下载中途删除任务 | 文件夹里的 .part 一起删掉 |
-| 设置了文件夹后下载音画分离的 m3u8 | 合成的 mp4 保存进文件夹，与离线合并结果逐字节一致，浏览器内部不留文件 |
-| 服务器每 3 个请求有 1 个只有 64 KB/s（同一地址后面有慢的服务器） | 慢连接被换掉，40 MB 用 18 秒下完（改之前 36 秒），内容一致 |
-| 带正确的 SHA-256 下载 40 MB 文件 | 下完显示“正在校验”，然后“SHA-256 校验通过 ✓” |
-| 带错误的 MD5 下载 | 报“文件和校验值不一致”，文件不保存，进度清零以便重新下载 |
-| 每服务器 2 个连接，加一个同文件镜像（另一个主机名）和一个不支持分段的“镜像” | 两个地址各下了一部分（约 25 MB + 15 MB），最高 4 个连接；坏镜像被弃用；文件校验通过 |
-| 用 ffmpeg 生成的 20 秒 720p 加密 HLS（H.264 + AAC） | 下载后 ffprobe 显示 1280×720、20.0 秒，ffmpeg 完整解码无错误 |
-| 下载管理页嗅探有一段 WAV 和一张校验 Referer 的 BMP 的页面 | 列表里有音频（带大小）和图片（带缩略图）；预览图片显示 200×150 |
-| 下载管理页嗅探加载了 m3u8 的页面 | 出现“流媒体”分类，勾选下载按 m3u8 合并成一个文件，与原视频一致 |
-| 在设置里把图片最小大小改成 1 KB、忽略关键词填 photo，再打开带 50 KB 和 2 KB 图片的页面 | 2 KB 的图标出现，含 photo 的图片被忽略 |
-| “本页链接”勾选 2 个文件，重命名规则 `batch-{n}`，复制链接后下载 | 预览显示 batch-1.mp4 / batch-2.bin；复制出 2 行链接；两个文件分别保存为 batch-1.mp4、batch-2.bin |
-| 页面用 MediaSource 分别喂 VP9 视频轨和 Opus 音轨（每次 16 KB），播放完调用 `endOfStream` | 弹窗显示录制卡片；开始录制后页面刷新，播放结束时自动保存为“网页标题.mp4”，与用同样两个轨道离线合并的结果逐字节一致；录完后注入的脚本已撤掉 |
-| 同样的页面只喂一半数据、不结束 | 点“停止并保存”，得到含视频和音频两条轨道的 mp4 |
-| 真实播放器 hls.js 播放 30 秒 480p 视频，只缓冲 6 秒、每个分片延迟 0.4 秒 | 16 倍速下 4 秒录完，ffprobe 显示 30.0 秒、视频+音频，ffmpeg 完整解码无错误 |
-| 嗅探有防盗链文件、图片、网页链接和视频的页面 | 默认只勾选文件类；取消“视频”后只剩 1 个文件，下载时带上来源页 Referer，文件完整 |
+**By hand** (Chrome 116 or later, or Edge):
 
-这只证明引擎在“按请求限速”的服务器上工作正常。真实站点（HTTP/2、CDN）的提速效果还需要按设计文档“下一步”第 2 条实测。
+1. Download this repository (Code → Download ZIP) and unzip it.
+2. Open `chrome://extensions` (`edge://extensions` in Edge) and turn on Developer mode.
+3. Click "Load unpacked" and choose the folder that contains `manifest.json`.
 
-## 代码结构
+## Use
 
-```
-manifest.json          MV3 清单
-_locales/{en,zh_CN}    界面文案
-src/background.js      Service Worker：右键菜单、自动接管、创建 Offscreen、调用 chrome.downloads 保存
-src/offscreen.js       下载引擎宿主（常驻）：任务列表、IndexedDB 持久化、每个任务一个 Worker
-src/task-worker.js     单个任务：并发 fetch Range，用 OPFS 同步句柄按偏移写盘
-src/scheduler.js       纯逻辑：分段切分、连接数控制器、测速（Node 单测覆盖）
-src/http.js            纯逻辑：Content-Range / 文件名解析
-src/sniff.js           页面链接收集（注入页面执行）和分类、去重、粘贴解析
-src/media.js           网络请求中的音视频图片识别、去重（Node 单测覆盖）
-src/hls.js             m3u8 解析：清晰度、分片、AES-128 密钥和 IV（Node 单测覆盖）
-src/dash.js            DASH .mpd 解析（小型 XML 解析器、分片模板、sidx），转成和 m3u8 相同的结构（Node 单测覆盖）
-src/hls-worker.js      单个 m3u8 / DASH 任务：并发下载分片、解密、按顺序合并写入 OPFS；音轨单独时分轨下载再合成
-src/hash.js            MD5 / SHA-1 / SHA-256 流式计算，用于下载校验（Node 单测对照 node:crypto）
-src/folder.js          保存位置：记住用户选的文件夹、检查写入权限、重名加 (1)、.part 改名
-src/fmp4.js            fMP4 拆分和合并：把录到的视频轨、音轨合成一个 mp4（Node 单测覆盖）
-src/record-hook.js     录制时注入页面：复制播放器喂给 MediaSource 的数据
-src/record-bridge.js   录制时的内容脚本：转发数据、16 倍速播放、给弹窗报进度
-src/record-sink.*      页面里的隐藏扩展页：合并轨道、写入 OPFS、交给下载列表
-src/popup.*            工具栏弹窗
-src/client.js          弹窗和管理页共用：文案、格式化、调用引擎
-src/ui.css, icons.js   共用样式和图标
-src/manager.*          下载管理页
-test/                  单元测试、限速测试服务器、Playwright 端到端测试
+- **Takeover:** click download links as usual; files over 20 MB (adjustable) go to Download Booster.
+- **Right-click:** on a link, video, audio or image choose "Download with Download Booster"; on the page choose "Find downloadable links on this page".
+- **Toolbar button:** the media and images on this page and your downloads; the number on the icon counts the videos and audio found.
+- **Download manager:** opened from the top right of the toolbar popup. Paste one or more links (one per line) and follow each download's pieces and speed.
+
+Settings are at the bottom of the download manager: takeover and its size threshold, connections per download, downloads at once, total speed limit, save folder and media detection rules.
+
+## Limitations
+
+- The browser caps connections per site: 6 for HTTP/1.1, and 2 TCP connections for HTTP/2 sites.
+- Chrome doesn't let an extension write into Downloads, Desktop or Documents themselves; pick a folder inside them, such as Downloads/Download Booster.
+- DRM-protected video, live streams and YouTube are not supported.
+- Downloads in incognito windows are not taken over.
+
+## Privacy
+
+No data is collected: no account, ads or analytics. Everything stays in your browser, and the extension only connects to the files you download. See the [privacy policy](docs/store/PRIVACY.md).
+
+## Development
+
+Plain ES modules with no build step: edit, then reload the extension on the extensions page.
+
+```sh
+npm install         # Playwright, only needed for the tests
+npm test            # unit tests
+npm run test:e2e    # end-to-end: loads the extension in Chromium, downloads from a local throttled server, checks the files
+npm run serve       # local throttled server at http://127.0.0.1:8787/file.bin
+npm run zip         # package as download-booster.zip
 ```
 
-开发命令：`npm test`（单元测试）、`npm run test:e2e`（端到端，需要 Playwright）、`npm run serve`（启动本地限速服务器，可用 `http://127.0.0.1:8787/file.bin` 手动试）、`npm run zip`（打包）。
+Implementation notes, test records and the code layout are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) (Chinese).
 
-原型阶段为了能直接“加载已解压”，用的是原生 ES 模块，没有构建步骤；设计文档建议的 TypeScript + Vite 可以在 MVP 稳定后再迁移。
-
-## 已知限制
-
-- 隐身窗口的下载不接管（Cookie 不同）。
-- 同一站点的连接上限是浏览器给的：HTTP/1.1 最多 6 条；HTTP/2 站点在每个连接池里只有 1 条 TCP 连接，两个池合计最多 2 条。要更多条连接需要第二阶段的本地助手。
-- 下载过程中文件先写入浏览器内部存储（OPFS），完成后再复制到下载目录，短时间占用双倍磁盘。
+Questions and suggestions: [open an issue](https://github.com/andrewjr1991/download-booster/issues).
