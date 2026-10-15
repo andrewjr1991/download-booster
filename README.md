@@ -7,6 +7,8 @@
 <p align="center">
   A browser extension for multi-connection downloads: fill your bandwidth on large files without installing a download manager.
   <br>
+  <a href="https://chromewebstore.google.com/detail/chgjgofmencmbmacnllicfamakifofnh"><b>Install from the Chrome Web Store</b></a>
+  <br>
   English · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
@@ -44,7 +46,7 @@
 
 ## Install
 
-**From the store:** [Chrome Web Store](https://chromewebstore.google.com/detail/chgjgofmencmbmacnllicfamakifofnh) (in review). Edge can install it from the Chrome Web Store too.
+**From the store:** [Chrome Web Store](https://chromewebstore.google.com/detail/chgjgofmencmbmacnllicfamakifofnh) (free). Edge can install it from the Chrome Web Store too.
 
 **By hand** (Chrome 116 or later, or Edge):
 

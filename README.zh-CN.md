@@ -7,6 +7,8 @@
 <p align="center">
   多连接分段下载的浏览器扩展：不用另装下载软件，大文件也能用满带宽。
   <br>
+  <a href="https://chromewebstore.google.com/detail/chgjgofmencmbmacnllicfamakifofnh"><b>从 Chrome 应用商店安装</b></a>
+  <br>
   <a href="README.md">English</a> · 简体中文
 </p>
 
@@ -44,7 +46,7 @@
 
 ## 安装
 
-**从商店安装**：[Chrome 应用商店](https://chromewebstore.google.com/detail/chgjgofmencmbmacnllicfamakifofnh)（审核中）。Edge 也可以从 Chrome 应用商店安装。
+**从商店安装**：[Chrome 应用商店](https://chromewebstore.google.com/detail/chgjgofmencmbmacnllicfamakifofnh)（免费）。Edge 也可以从 Chrome 应用商店安装。
 
 **手动安装**（Chrome 116 或更新版本，或 Edge）：
 
