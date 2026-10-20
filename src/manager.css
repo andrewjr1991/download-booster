@@ -435,13 +435,24 @@ body.app {
 }
 
 /* Narrow windows: the sidebar becomes a row of tabs, fewer columns. */
-@media (max-width: 860px) {
+.content {
+  container-type: inline-size;
+}
+@container (max-width: 980px) {
   .thead,
   .task {
-    grid-template-columns: 30px minmax(0, 1fr) 150px 90px 120px;
+    grid-template-columns: 34px minmax(0, 1fr) 80px 150px 96px 120px;
   }
-  .c-size,
   .c-date {
+    display: none !important;
+  }
+}
+@container (max-width: 760px) {
+  .thead,
+  .task {
+    grid-template-columns: 30px minmax(0, 1fr) 140px 90px 110px;
+  }
+  .c-size {
     display: none !important;
   }
 }

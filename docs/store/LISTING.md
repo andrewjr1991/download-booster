@@ -50,7 +50,8 @@ YOUR WAY
 • Save straight into a folder you pick, sorted into subfolders by file type if you like
 • Numbered series from one link, such as img[001-120].jpg
 • Alt+Shift+D opens the download manager
-• Search and filter your downloads; open a finished file, copy its link or download it again
+• A clear download manager: downloads sorted by state and file type, columns you can sort, several at once with a tick, a right-click menu
+• Search your downloads; open a finished file, copy its link or download it again
 • Optional notification when a download finishes or fails
 • Batch download every link on a page, with filters and renaming
 • English and Chinese
@@ -92,7 +93,8 @@ Not supported: DRM-protected video, live streams, and YouTube.
 • 可按文件类型自动分到子文件夹
 • 一个链接按规律批量生成，如 img[001-120].jpg
 • Alt+Shift+D 打开下载管理
-• 下载任务可搜索、按状态和类型筛选；完成的文件可直接打开、复制链接、重新下载
+• 清爽的下载管理：按状态和文件类型分类，可排序，勾选多个一起操作，右键菜单
+• 下载任务可搜索；完成的文件可直接打开、复制链接、重新下载
 • 可选：下载完成或失败时弹出通知
 • 直接保存到你选择的文件夹
 • 批量下载网页上的所有链接，可以筛选和批量改名
