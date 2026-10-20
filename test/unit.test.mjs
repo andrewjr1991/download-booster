@@ -432,3 +432,20 @@ test('checksums: MD5, SHA-1 and SHA-256 fed in pieces match node:crypto', () => 
   assert.equal(parseChecksum('abc'), null);
 });
 
+
+test('task list filters', async () => {
+  const { matchTask, taskGroup, taskKind } = await import('../src/tasks-filter.js');
+  const iso = { status: 'completed', filename: 'ubuntu-24.04.iso', url: 'https://releases.example.com/24.04/ubuntu-24.04.iso' };
+  const zip = { status: 'paused', filename: null, url: 'https://h/files/%E6%95%B0%E6%8D%AE.zip?token=1' };
+  const bad = { status: 'error', filename: 'movie.mp4', url: 'https://h/v' };
+  const hls = { status: 'downloading', kind: 'hls', filename: 'Some show', url: 'https://h/master.m3u8' };
+  assert.deepEqual([iso, zip, bad, hls].map(taskGroup), ['completed', 'active', 'error', 'active']);
+  assert.deepEqual([iso, zip, bad, hls].map(taskKind), ['disk', 'archive', 'video', 'video']);
+  assert.ok(matchTask(iso));
+  assert.ok(matchTask(zip, { group: 'active', kind: 'archive' }));
+  assert.ok(!matchTask(zip, { group: 'completed' }));
+  assert.ok(!matchTask(iso, { kind: 'video' }));
+  assert.ok(matchTask(iso, { q: '  UBUNTU  releases ' }), 'every word, any case, name or address');
+  assert.ok(!matchTask(iso, { q: 'ubuntu debian' }));
+  assert.ok(matchTask(zip, { q: '数据' }), 'searches the readable address');
+});

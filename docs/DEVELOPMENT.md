@@ -114,7 +114,7 @@ tools/make-icon128.py  绘制扩展图标（128 px 图标按商店要求留边�
 docs/store/            商店资料：介绍文字、权限说明、隐私政策、截图
 ```
 
-开发命令：`npm test`（单元测试）、`npm run test:e2e`（端到端，需要 Playwright）、`npm run serve`（启动本地限速服务器，可用 `http://127.0.0.1:8787/file.bin` 手动试）、`npm run zip`（打包成可提交商店的 zip）、`npm run shots`（重新生成商店截图）。
+开发命令：`npm test`（单元测试）、`npm run test:e2e`（端到端，需要 Playwright）、`npm run test:permissions`（通知和打开文件这类可选权限的功能；自动化无法点权限弹窗，所以加载一份预先授予这些权限的副本）、`npm run serve`（启动本地限速服务器，可用 `http://127.0.0.1:8787/file.bin` 手动试）、`npm run zip`（打包成可提交商店的 zip）、`npm run shots`（重新生成商店截图）。
 
 为了能直接“加载已解压”，代码用原生 ES 模块，没有构建步骤。
 

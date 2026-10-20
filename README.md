@@ -37,6 +37,8 @@
 - Takes over browser downloads above a size you choose, or only the ones you send to it
 - Global speed limit and number of downloads at once
 - Save straight into a folder you pick
+- Search your downloads and filter them by state or file type; open a finished file, copy its link or download it again
+- Optional notification when a download finishes or fails
 - Collect every link on a page, filter by type, download in bulk and rename by a pattern
 - English and Chinese, following the browser's language
 

@@ -2,7 +2,7 @@
 // talking to the download engine.
 
 export const t = (key, subs) => chrome.i18n.getMessage(key, subs) || key;
-export const DEFAULT_SETTINGS = { autoTakeover: true, minSizeMB: 20, maxConnections: 6, maxActive: 3, speedLimitMB: 0 };
+export const DEFAULT_SETTINGS = { autoTakeover: true, minSizeMB: 20, maxConnections: 6, maxActive: 3, speedLimitMB: 0, notify: false };
 export const MB = 1024 * 1024;
 
 export function localize(root = document) {

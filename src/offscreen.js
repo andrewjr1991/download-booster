@@ -95,6 +95,23 @@ async function handle(msg) {
         if (t.status === 'saving') await save(t);
       } else setStatus(t, 'error', { code: 'save', message: msg.error });
       return { ok: true };
+    case 'redownload':
+      // The same file again as a new download, with what it was added with.
+      if (!t || t.kind === 'record') return { ok: false };
+      setLimit(msg.maxActive);
+      setSpeedLimit(msg.speedLimit);
+      return add({
+        url: t.url,
+        filename: t.filename,
+        maxConnections: msg.maxConnections,
+        source: t.source,
+        referrer: t.referrer,
+        kind: t.kind,
+        variant: t.variant,
+        rename: t.rename,
+        mirrors: t.mirrors,
+        checksum: t.checksum,
+      });
     case 'clear-finished':
       for (const x of [...tasks.values()]) if (x.status === 'completed') await removeTask(x);
       return { ok: true };
@@ -611,10 +628,16 @@ async function deleteOpfs(t) {
 }
 
 function setStatus(t, status, error = null) {
+  const was = t.status;
   t.status = status;
   t.error = error;
   persist(t);
   broadcast();
+  // The background shows a notification when the user turned them on.
+  if (status !== was && (status === 'completed' || status === 'error') && !t.takeover) {
+    const { id, filename, url, downloadId, savedTo } = t;
+    chrome.runtime.sendMessage({ type: 'task-finished', task: { id, filename, url, status, error, downloadId, savedTo } }).catch(() => {});
+  }
 }
 
 function persist(t) {

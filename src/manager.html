@@ -69,8 +69,14 @@
         </div>
       </div>
 
+      <div id="task-tools" hidden>
+        <div id="task-groups" class="chips"></div>
+        <div id="task-kinds" class="chips"></div>
+        <input id="task-search" type="search" data-i18n-placeholder="taskSearchPlaceholder" autocomplete="off" spellcheck="false" />
+      </div>
       <section id="tasks" aria-live="polite"></section>
       <p id="empty" class="empty" data-i18n="empty" hidden></p>
+      <p id="no-match" class="empty" data-i18n="taskNoMatch" hidden></p>
 
       <details id="settings">
         <summary data-i18n="settings">Settings</summary>
@@ -95,6 +101,10 @@
           <input type="number" id="speedLimitMB" min="0" step="0.1" data-i18n-placeholder="noLimit" />
         </label>
         <p class="hint" data-i18n="settingsHint"></p>
+        <label class="row">
+          <input type="checkbox" id="notify" />
+          <span data-i18n="notifySetting"></span>
+        </label>
         <h3 data-i18n="saveFolder"></h3>
         <div class="row folder-row">
           <span id="folder-name" class="folder-name"></span>

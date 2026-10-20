@@ -458,5 +458,53 @@
   },
   "folderPickSub": {
     "message": "Chrome 不允许扩展直接使用“下载”“桌面”“文档”这几个文件夹本身。请在弹出的窗口里进入“下载”，选择或新建一个子文件夹，例如“下载/下载加速器”。"
+  },
+  "openFile": {
+    "message": "打开"
+  },
+  "redownload": {
+    "message": "重新下载"
+  },
+  "openFileFailed": {
+    "message": "打不开这个文件（可能已被移走或删除），已改为打开所在文件夹。"
+  },
+  "openFileAllowed": {
+    "message": "已允许，再点一次“打开”即可打开文件。"
+  },
+  "taskSearchPlaceholder": {
+    "message": "按名称或地址搜索下载任务"
+  },
+  "taskNoMatch": {
+    "message": "没有符合条件的下载任务。"
+  },
+  "groupAll": {
+    "message": "全部 $1"
+  },
+  "groupActive": {
+    "message": "进行中 $1"
+  },
+  "groupCompleted": {
+    "message": "已完成 $1"
+  },
+  "groupError": {
+    "message": "失败 $1"
+  },
+  "notifySetting": {
+    "message": "下载完成或失败时弹出通知"
+  },
+  "notifyDenied": {
+    "message": "没有获得通知权限，不会弹出通知。"
+  },
+  "notifyDone": {
+    "message": "下载完成"
+  },
+  "notifyFailed": {
+    "message": "下载失败"
+  },
+  "notifyClickOpen": {
+    "message": "点击打开文件"
+  },
+  "notifyClickManager": {
+    "message": "点击打开下载管理"
   }
 }

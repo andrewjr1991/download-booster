@@ -1,9 +1,10 @@
-import { CATEGORY_ORDER, categorize, parsePastedUrls } from './sniff.js';
+import { CATEGORY_ORDER, parsePastedUrls } from './sniff.js';
 import { ICONS } from './icons.js';
 import { DEFAULT_RULES } from './media.js';
 import { pickFilename, applyRename } from './http.js';
 import { getFolder, setFolder, folderPermission } from './folder.js';
 import { parseChecksum, ALGO_NAMES } from './hash.js';
+import { TASK_GROUPS, taskGroup, taskKind, matchTask } from './tasks-filter.js';
 import {
   t,
   DEFAULT_SETTINGS,
@@ -11,6 +12,7 @@ import {
   localize,
   engine,
   addUrls as addTasks,
+  getSettings,
   bytes,
   speed,
   duration,
@@ -26,11 +28,20 @@ const DEBUG = new URLSearchParams(location.search).has('debug');
 
 // ---- rendering ----------------------------------------------------------------
 
-function render(tasks, speedLimit = 0) {
+let lastTasks = [];
+let lastLimit = 0;
+// What the task list shows: a state, a file type, and a search.
+const view = { group: 'all', kind: null, q: '' };
+
+function render(tasks = lastTasks, speedLimit = lastLimit) {
+  lastTasks = tasks;
+  lastLimit = speedLimit;
   renderTotal(tasks, speedLimit);
+  renderTaskTools(tasks);
+  const shown = tasks.filter((task) => matchTask(task, view));
   const seen = new Set();
   const list = $('#tasks');
-  tasks.forEach((task, i) => {
+  shown.forEach((task, i) => {
     seen.add(task.id);
     let card = cards.get(task.id);
     if (!card) {
@@ -47,7 +58,64 @@ function render(tasks, speedLimit = 0) {
     }
   }
   $('#empty').hidden = tasks.length > 0;
+  $('#no-match').hidden = !tasks.length || shown.length > 0;
 }
+
+// State chips with counts, file type chips (when there is more than one
+// type), and the search box. Hidden until there are a few downloads.
+function renderTaskTools(tasks) {
+  const filtered = view.group !== 'all' || view.kind || view.q;
+  $('#task-tools').hidden = tasks.length < 2 && !filtered;
+  const counts = { all: tasks.length, active: 0, completed: 0, error: 0 };
+  const kinds = {};
+  for (const task of tasks) {
+    counts[taskGroup(task)]++;
+    const k = taskKind(task);
+    kinds[k] = (kinds[k] || 0) + 1;
+  }
+  // Nothing left in the picked group or type: show everything again.
+  if (view.group !== 'all' && !counts[view.group]) view.group = 'all';
+  if (view.kind && !kinds[view.kind]) view.kind = null;
+  const groupKey = { all: 'groupAll', active: 'groupActive', completed: 'groupCompleted', error: 'groupError' };
+  chipRow(
+    $('#task-groups'),
+    TASK_GROUPS.filter((g) => g === 'all' || counts[g]).map((g) => [g, t(groupKey[g], [String(counts[g])]), view.group === g]),
+    (g) => (view.group = g),
+  );
+  const present = CATEGORY_ORDER.filter((c) => kinds[c]);
+  chipRow(
+    $('#task-kinds'),
+    present.length > 1 ? present.map((k) => [k, `${t(CATEGORY_KEYS[k])} ${kinds[k]}`, view.kind === k]) : [],
+    (k) => (view.kind = view.kind === k ? null : k),
+  );
+}
+
+// Rebuilt only when a label or the pressed chip changes, so a click is not
+// lost to a re-render in between.
+function chipRow(box, chips, pick) {
+  const key = JSON.stringify(chips);
+  if (box.dataset.key === key) return;
+  box.dataset.key = key;
+  box.hidden = !chips.length;
+  box.replaceChildren(
+    ...chips.map(([value, label, pressed]) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.value = value;
+      b.textContent = label;
+      b.setAttribute('aria-pressed', String(pressed));
+      b.onclick = () => {
+        pick(value);
+        render();
+      };
+      return b;
+    }),
+  );
+}
+$('#task-search').addEventListener('input', (e) => {
+  view.q = e.target.value;
+  render();
+});
 
 // Combined speed of all running tasks, and the limit when one is set.
 function renderTotal(tasks, speedLimit) {
@@ -62,7 +130,7 @@ function updateCard(card, task) {
   const name = task.filename || task.url;
   card.querySelector('.name').textContent = name;
   card.querySelector('.name').title = task.url;
-  const kind = categorize(`https://x/${encodeURIComponent(name)}`);
+  const kind = taskKind(task);
   const ftype = card.querySelector('.ftype');
   if (ftype.dataset.kind !== kind) {
     ftype.dataset.kind = kind;
@@ -125,25 +193,41 @@ function levelsLine(task) {
   return parts.join(' · ');
 }
 
+// Buttons with a label, then a row of small icon buttons.
 function renderActions(box, task) {
   const wanted = [];
+  const small = [];
   if (task.status === 'downloading' || task.status === 'queued') wanted.push(['pause', 'pause', 'pause'], ['cancel', 'cancel', 'close']);
   if (task.status === 'paused') wanted.push(['resume', 'resume', 'play'], ['cancel', 'cancel', 'close']);
   if (task.status === 'error') wanted.push(['retry', 'resume', 'retry'], ['remove', 'remove', 'trash']);
-  // Files saved into the picked folder are not in the browser's download list.
-  if (task.status === 'completed') wanted.push(...(task.savedTo ? [] : [['showInFolder', 'show', 'folder']]), ['remove', 'remove', 'trash']);
-  const key = wanted.map((w) => w[0]).join();
+  if (task.status === 'completed') {
+    // Files saved into the picked folder are not in the browser's download
+    // list, so the browser cannot open or show them.
+    if (!task.savedTo && task.downloadId != null) wanted.push(['openFile', 'open', 'open'], ['showInFolder', 'show', 'folder']);
+    // A recording's address is the page, not a file.
+    if (task.kind !== 'record') small.push(['redownload', 'redownload', 'retry']);
+    small.push(['remove', 'remove', 'trash']);
+  }
+  if (task.kind !== 'record' && /^https?:/i.test(task.url || '')) small.unshift(['copyLink', 'copy', 'link']);
+  const key = `${wanted.map((w) => w[0])}|${small.map((w) => w[0])}`;
   if (box.dataset.key === key) return;
   box.dataset.key = key;
-  box.replaceChildren(
-    ...wanted.map(([label, action, ic]) => {
-      const b = document.createElement('button');
-      b.innerHTML = ICONS[ic];
-      b.append(t(label));
-      b.onclick = () => act(action, task);
-      return b;
-    }),
-  );
+  const button = ([label, action, ic], withLabel) => {
+    const b = document.createElement('button');
+    b.dataset.action = action;
+    b.innerHTML = ICONS[ic];
+    if (withLabel) b.append(t(label));
+    else {
+      b.title = t(label);
+      b.setAttribute('aria-label', t(label));
+    }
+    b.onclick = () => act(action, task);
+    return b;
+  };
+  const row = document.createElement('div');
+  row.className = 'mini';
+  row.append(...small.map((w) => button(w, false)));
+  box.replaceChildren(...wanted.map((w) => button(w, true)), ...(small.length ? [row] : []));
 }
 
 async function act(action, task) {
@@ -151,8 +235,38 @@ async function act(action, task) {
     if (task.downloadId != null) chrome.downloads.show(task.downloadId);
     return;
   }
+  if (action === 'open') return openFile(task);
+  if (action === 'copy') {
+    await navigator.clipboard.writeText(task.url);
+    return note(t('copied'));
+  }
+  if (action === 'redownload') {
+    const s = await getSettings();
+    await engine('redownload', { id: task.id, maxConnections: s.maxConnections, maxActive: s.maxActive, speedLimit: s.speedLimitMB * MB });
+    view.group = 'all';
+    return refresh();
+  }
   await engine(action, { id: task.id });
   refresh();
+}
+
+// Opening a file needs the optional "downloads.open" permission, asked for
+// on the first click. Chrome only opens a file in answer to a click; if the
+// permission prompt took too long for that, the user clicks again.
+async function openFile(task) {
+  const had = await chrome.permissions.contains({ permissions: ['downloads.open'] });
+  if (!had && !(await chrome.permissions.request({ permissions: ['downloads.open'] }).catch(() => false))) return;
+  const [item] = await chrome.downloads.search({ id: task.downloadId });
+  try {
+    if (!item || item.exists === false) throw new Error('gone');
+    await chrome.downloads.open(task.downloadId);
+    note('');
+  } catch (err) {
+    if (!had && /gesture/i.test(String(err?.message))) return note(t('openFileAllowed'));
+    // Moved or deleted since: show where it was instead.
+    note(t('openFileFailed'));
+    chrome.downloads.show(task.downloadId);
+  }
 }
 
 function drawBar(canvas, task) {
@@ -546,6 +660,7 @@ async function loadSettings() {
   $('#maxConnections').value = s.maxConnections;
   $('#maxActive').value = s.maxActive;
   $('#speedLimitMB').value = s.speedLimitMB || '';
+  $('#notify').checked = s.notify && (await chrome.permissions.contains({ permissions: ['notifications'] }));
   const rules = { ...DEFAULT_RULES, ...s.sniffRules };
   for (const k of ['video', 'audio', 'image', 'ignore']) $(`#rule-${k}`).value = rules[k];
   $('#rule-minImageKB').value = rules.minImageKB;
@@ -560,6 +675,7 @@ async function saveSettings() {
     maxActive: clamp(Number($('#maxActive').value), 1, 10, DEFAULT_SETTINGS.maxActive),
     // Empty or 0 means no limit; tenths of a MB/s are allowed.
     speedLimitMB: Math.min(100000, Math.max(0, Math.round(Number($('#speedLimitMB').value) * 10) / 10 || 0)),
+    notify: $('#notify').checked,
     sniffRules: {
       video: $('#rule-video').value.trim(),
       audio: $('#rule-audio').value.trim(),
@@ -610,6 +726,15 @@ $('#folder-reset').addEventListener('click', async () => {
 });
 showFolder();
 
+// Notifications are an optional permission, asked for when turned on, so the
+// update that added them did not need new permissions from every user.
+$('#notify').addEventListener('change', async (e) => {
+  if (e.target.checked && !(await chrome.permissions.request({ permissions: ['notifications'] }).catch(() => false))) {
+    e.target.checked = false;
+    note(t('notifyDenied'));
+  }
+  saveSettings();
+});
 for (const id of ['autoTakeover', 'minSizeMB', 'maxConnections', 'maxActive', 'speedLimitMB']) $('#' + id).addEventListener('change', saveSettings);
 for (const el of document.querySelectorAll('#settings .rule, #rule-minImageKB')) el.addEventListener('change', saveSettings);
 

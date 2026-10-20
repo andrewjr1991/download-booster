@@ -4,7 +4,7 @@ What to fill in on the Chrome Web Store developer dashboard (and the Edge Add-on
 
 ## Package
 
-- Upload: `download-booster-1.0.0.zip` (manifest.json, _locales, src, icons; nothing else).
+- Upload: `download-booster-1.1.0.zip` (manifest.json, _locales, src, icons; nothing else).
 - Default language: English. Chinese (zh_CN) listing added as a second language.
 - Category: Tools (工具).
 - Privacy policy URL: https://github.com/andrewjr1991/download-booster/blob/main/docs/store/PRIVACY.md
@@ -48,6 +48,8 @@ YOUR WAY
 • Takes over browser downloads above a size you choose, or only the ones you send to it
 • Global speed limit and number of downloads at once
 • Save straight into a folder you pick
+• Search and filter your downloads; open a finished file, copy its link or download it again
+• Optional notification when a download finishes or fails
 • Batch download every link on a page, with filters and renaming
 • English and Chinese
 
@@ -85,6 +87,8 @@ Not supported: DRM-protected video, live streams, and YouTube.
 按你的习惯
 • 自动接管超过指定大小的浏览器下载，也可以只下你发给它的
 • 全局限速，设置同时下载的任务数
+• 下载任务可搜索、按状态和类型筛选；完成的文件可直接打开、复制链接、重新下载
+• 可选：下载完成或失败时弹出通知
 • 直接保存到你选择的文件夹
 • 批量下载网页上的所有链接，可以筛选和批量改名
 • 支持中文和英文
@@ -111,6 +115,8 @@ Not supported: DRM-protected video, live streams, and YouTube.
 | declarativeNetRequestWithHostAccess | Sends the page's Referer with a download's requests, so files from sites that block requests without it (hotlink protection) still download. Applied only to the requests of the download the user started. |
 | scripting | Reads the links on the current page when the user clicks "Find all links on this page", and, only while the user records a video, adds the recording script to that page. |
 | webRequest | Sees which videos, audio, images and playlists a page loads, so the toolbar button can list them for the user to download. |
+| notifications (optional) | Asked for only when the user turns on "Show a notification when a download finishes or fails" in the settings; shows that notification. |
+| downloads.open (optional) | Asked for the first time the user clicks "Open" on a finished download; opens that file. |
 | Host permission `<all_urls>` | Files can be on any website, and their pieces must be requested from that site with range requests; the media list needs to see what any page loads. |
 
 **Remote code:** No, I am not using remote code. All code is in the package.

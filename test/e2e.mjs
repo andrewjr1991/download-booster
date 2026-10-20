@@ -998,6 +998,67 @@ await check('saving: if writing keeps failing, the reason is shown and retrying 
   }
 });
 
+await check('task list: filter by state and type, search by name', async () => {
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6 });
+  for (const t of (await engine('list')).tasks) await engine('remove', { id: t.id });
+  const done = await download(`${srv.url}/file.bin?list=done`, { maxConnections: 6 });
+  const { id: pausedId } = await engine('add', { url: `${srv.url}/file.bin?list=paused`, maxConnections: 1 });
+  await waitTask(pausedId, (t) => t.downloaded > 0);
+  await engine('pause', { id: pausedId });
+  await waitTask(pausedId, (t) => t.status === 'paused');
+  await page.waitForSelector('#task-tools:not([hidden])');
+  const cards = () => page.$$eval('#tasks .task .name', (els) => els.map((e) => e.title));
+  const chips = await page.$$eval('#task-groups button', (els) => els.map((e) => e.textContent));
+  if (chips.length !== 3) throw new Error(`state chips: ${chips}`);
+  await page.click('#task-groups button[data-value="completed"]');
+  let shown = await cards();
+  if (shown.length !== 1 || !shown[0].includes('list=done')) throw new Error(`completed shows ${shown}`);
+  await page.click('#task-groups button[data-value="active"]');
+  shown = await cards();
+  if (shown.length !== 1 || !shown[0].includes('list=paused')) throw new Error(`in progress shows ${shown}`);
+  await page.click('#task-groups button[data-value="all"]');
+  await page.fill('#task-search', 'no such file');
+  await page.waitForSelector('#no-match:not([hidden])');
+  await page.fill('#task-search', 'LIST=PAUSED');
+  shown = await cards();
+  if (shown.length !== 1 || !shown[0].includes('list=paused')) throw new Error(`search shows ${shown}`);
+  await page.fill('#task-search', '');
+  await page.dispatchEvent('#task-search', 'input');
+  shown = await cards();
+  if (shown.length !== 2) throw new Error(`cleared search shows ${shown}`);
+  await engine('remove', { id: pausedId });
+  return `chips "${chips.join(' / ')}"; ${done.done.filename} kept`;
+});
+
+await check('completed download: copy its link, download it again', async () => {
+  const { done: task } = await download(`${srv.url}/file.bin?again`, { maxConnections: 6 });
+  const card = page.locator('#tasks .task', { has: page.locator(`.name[title="${task.url}"]`) });
+  await card.locator('button[data-action="redownload"]').waitFor();
+  const labels = await card.locator('.actions button').evaluateAll((els) => els.map((e) => e.dataset.action));
+  for (const a of ['open', 'show', 'copy', 'redownload', 'remove']) if (!labels.includes(a)) throw new Error(`actions ${labels}`);
+  // Tests can't read the clipboard here: note what the page writes to it.
+  await page.evaluate(() => {
+    window.copiedText = null;
+    const write = navigator.clipboard.writeText.bind(navigator.clipboard);
+    navigator.clipboard.writeText = (text) => ((window.copiedText = text), write(text).catch(() => {}));
+  });
+  await card.locator('button[data-action="copy"]').click();
+  const copied = await page.evaluate(() => window.copiedText);
+  if (copied !== task.url) throw new Error(`copied ${copied}`);
+  const before = (await engine('list')).tasks.map((t) => t.id);
+  await card.locator('button[data-action="redownload"]').click();
+  let again;
+  for (let i = 0; i < 20 && !again; i++) {
+    await sleep(250);
+    again = (await engine('list')).tasks.find((t) => !before.includes(t.id));
+  }
+  if (!again || again.url !== task.url) throw new Error(`download again added ${JSON.stringify(again)}`);
+  const done = await waitTask(again.id, (t) => t.status === 'completed');
+  const { hash, item } = await savedFileHash(done.downloadId);
+  if (hash !== srv.sha256) throw new Error('hash mismatch');
+  return `copied the link; saved again as ${path.basename(item.filename)}`;
+});
+
 await check('small files are left to the browser', async () => {
   await setSettings({ autoTakeover: true, minSizeMB: SIZE_MB + 1, maxConnections: 6 });
   const before = (await engine('list')).tasks.map((t) => t.id);

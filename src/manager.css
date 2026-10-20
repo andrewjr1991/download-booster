@@ -139,6 +139,24 @@ main {
   padding: 40px 16px;
 }
 
+#task-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  margin-top: 16px;
+}
+#task-tools .chips {
+  margin: 0;
+}
+#task-search {
+  flex: 1;
+  min-width: 200px;
+}
+#task-tools:not([hidden]) + #tasks {
+  margin-top: 10px;
+}
+
 #tasks {
   display: flex;
   flex-direction: column;
@@ -211,6 +229,21 @@ main {
 .actions button svg {
   width: 14px;
   height: 14px;
+}
+/* Less used actions: icon only, side by side. */
+.actions .mini {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+.actions .mini button {
+  padding: 4px 6px;
+  background: transparent;
+  color: var(--muted);
+}
+.actions .mini button:hover {
+  background: var(--raised);
+  color: var(--text);
 }
 
 #settings {

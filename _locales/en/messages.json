@@ -458,5 +458,53 @@
   },
   "folderPickSub": {
     "message": "Chrome won’t let extensions use the Downloads, Desktop or Documents folder itself. Open it and pick or create a folder inside it, e.g. Downloads/Download Booster."
+  },
+  "openFile": {
+    "message": "Open"
+  },
+  "redownload": {
+    "message": "Download again"
+  },
+  "openFileFailed": {
+    "message": "The file can't be opened (moved or deleted?), so its folder is shown instead."
+  },
+  "openFileAllowed": {
+    "message": "Allowed. Click Open again to open the file."
+  },
+  "taskSearchPlaceholder": {
+    "message": "Search downloads by name or address"
+  },
+  "taskNoMatch": {
+    "message": "No downloads match."
+  },
+  "groupAll": {
+    "message": "All $1"
+  },
+  "groupActive": {
+    "message": "In progress $1"
+  },
+  "groupCompleted": {
+    "message": "Completed $1"
+  },
+  "groupError": {
+    "message": "Failed $1"
+  },
+  "notifySetting": {
+    "message": "Show a notification when a download finishes or fails"
+  },
+  "notifyDenied": {
+    "message": "Notifications were not allowed, so none will be shown."
+  },
+  "notifyDone": {
+    "message": "Download complete"
+  },
+  "notifyFailed": {
+    "message": "Download failed"
+  },
+  "notifyClickOpen": {
+    "message": "Click to open the file"
+  },
+  "notifyClickManager": {
+    "message": "Click to open the download manager"
   }
 }
