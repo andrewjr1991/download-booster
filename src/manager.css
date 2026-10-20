@@ -398,3 +398,10 @@ main {
   width: 15px;
   height: 15px;
 }
+
+.subdir-rows {
+  padding-left: 26px;
+}
+.subdir-rows .row span {
+  min-width: 5em;
+}

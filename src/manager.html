@@ -113,6 +113,46 @@
           <button type="button" id="folder-reset" class="ghost" data-i18n="folderReset" hidden></button>
         </div>
         <p class="hint" id="folder-hint"></p>
+        <label class="row">
+          <input type="checkbox" id="subdirs-on" />
+          <span data-i18n="subfoldersOn"></span>
+        </label>
+        <div id="subdir-rows" class="subdir-rows" hidden>
+          <label class="row">
+            <span data-i18n="catVideo"></span>
+            <input type="text" class="subdir" data-kind="video" autocomplete="off" spellcheck="false" />
+          </label>
+          <label class="row">
+            <span data-i18n="catAudio"></span>
+            <input type="text" class="subdir" data-kind="audio" autocomplete="off" spellcheck="false" />
+          </label>
+          <label class="row">
+            <span data-i18n="catImage"></span>
+            <input type="text" class="subdir" data-kind="image" autocomplete="off" spellcheck="false" />
+          </label>
+          <label class="row">
+            <span data-i18n="catArchive"></span>
+            <input type="text" class="subdir" data-kind="archive" autocomplete="off" spellcheck="false" />
+          </label>
+          <label class="row">
+            <span data-i18n="catProgram"></span>
+            <input type="text" class="subdir" data-kind="program" autocomplete="off" spellcheck="false" />
+          </label>
+          <label class="row">
+            <span data-i18n="catDisk"></span>
+            <input type="text" class="subdir" data-kind="disk" autocomplete="off" spellcheck="false" />
+          </label>
+          <label class="row">
+            <span data-i18n="catDocument"></span>
+            <input type="text" class="subdir" data-kind="document" autocomplete="off" spellcheck="false" />
+          </label>
+          <p class="hint" data-i18n="subfoldersHint"></p>
+        </div>
+        <h3 data-i18n="shortcutTitle"></h3>
+        <div class="row">
+          <span id="shortcut-now"></span>
+          <button type="button" id="shortcut-change" data-i18n="shortcutChange"></button>
+        </div>
         <h3 data-i18n="sniffRules"></h3>
         <p class="hint" data-i18n="sniffRulesHint"></p>
         <label class="row">

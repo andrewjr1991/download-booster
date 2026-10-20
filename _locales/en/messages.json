@@ -18,7 +18,7 @@
     "message": "Downloads"
   },
   "addPlaceholder": {
-    "message": "Paste one or more download links (http or https), one per line"
+    "message": "Paste one or more download links, one per line. [1-100] in a link makes a numbered series"
   },
   "addButton": {
     "message": "Download"
@@ -506,5 +506,53 @@
   },
   "notifyClickManager": {
     "message": "Click to open the download manager"
+  },
+  "patternPreview": {
+    "message": "Adds $1 links: $2 … $3"
+  },
+  "patternLimit": {
+    "message": "At most $1 links are made from one pattern."
+  },
+  "subfoldersOn": {
+    "message": "Sort into subfolders by file type"
+  },
+  "subfoldersHint": {
+    "message": "Files go into these folders inside the download folder (or the folder you picked). Leave one empty for its default name; several levels work too, such as Videos/Movies."
+  },
+  "dirVideo": {
+    "message": "Videos"
+  },
+  "dirAudio": {
+    "message": "Music"
+  },
+  "dirImage": {
+    "message": "Pictures"
+  },
+  "dirArchive": {
+    "message": "Archives"
+  },
+  "dirProgram": {
+    "message": "Programs"
+  },
+  "dirDisk": {
+    "message": "Disk images"
+  },
+  "dirDocument": {
+    "message": "Documents"
+  },
+  "shortcutTitle": {
+    "message": "Keyboard shortcut"
+  },
+  "shortcutNow": {
+    "message": "Open the download manager: $1"
+  },
+  "shortcutNone": {
+    "message": "Open the download manager: not set"
+  },
+  "shortcutChange": {
+    "message": "Change…"
+  },
+  "commandOpenManager": {
+    "message": "Open the download manager"
   }
 }

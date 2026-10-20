@@ -883,6 +883,85 @@ await check('download folder: a joined m3u8 is saved into the folder too', async
   return `saved ${done.savedTo}, identical to the expected join`;
 });
 
+// Every file under the picked folder, subfolders included: path -> SHA-256.
+const pickedTree = () =>
+  page.evaluate(async () => {
+    const out = {};
+    async function walk(dir, prefix) {
+      for await (const [n, h] of dir.entries()) {
+        if (h.kind === 'directory') await walk(h, `${prefix}${n}/`);
+        else {
+          const buf = await (await h.getFile()).arrayBuffer();
+          out[prefix + n] = [...new Uint8Array(await crypto.subtle.digest('SHA-256', buf))].map((b) => b.toString(16).padStart(2, '0')).join('');
+        }
+      }
+    }
+    await walk(await (await navigator.storage.getDirectory()).getDirectoryHandle('picked', { create: true }), '');
+    return out;
+  });
+
+async function addFromForm(url) {
+  const before = (await engine('list')).tasks.map((t) => t.id);
+  await page.fill('#url', url);
+  await page.press('#url', 'Enter');
+  for (let i = 0; i < 40; i++) {
+    await sleep(250);
+    const added = (await engine('list')).tasks.filter((t) => !before.includes(t.id));
+    if (added.length) return added;
+  }
+  throw new Error('nothing added');
+}
+
+await check('subfolders by type: into the browser download folder and into the picked folder', async () => {
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6, subfolders: { on: true, names: { disk: 'Images/ISO' } } });
+  // Playwright keeps downloads under made-up names: note the name asked for.
+  await sw.evaluate(() => {
+    self.savedNames = [];
+    const download = chrome.downloads.download.bind(chrome.downloads);
+    chrome.downloads.download = (opts) => (self.savedNames.push(opts.filename), download(opts));
+  });
+  const [a] = await addFromForm(`${srv.url}/file.bin?sub=1`);
+  const doneA = await waitTask(a.id, (t) => t.status === 'completed');
+  const { hash } = await savedFileHash(doneA.downloadId);
+  const [asked] = await sw.evaluate(() => self.savedNames);
+  if (hash !== srv.sha256 || asked !== 'Images/ISO/test-40MB.bin') throw new Error(`saved as ${asked}`);
+  await pickFolder(true);
+  const [b] = await addFromForm(`${srv.url}/file.bin?sub=2`);
+  const doneB = await waitTask(b.id, (t) => t.status === 'completed');
+  const { id: c } = await engine('add', { url: `${srv.url}/hlsav/master.m3u8`, kind: 'hls', filename: 'AV sub', maxConnections: 4, subfolders: { video: 'Videos' } });
+  const doneC = await waitTask(c, (t) => t.status === 'completed', 60000);
+  const tree = await pickedTree();
+  await pickFolder(false);
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6 });
+  if (tree['Images/ISO/test-40MB.bin'] !== srv.sha256 || doneB.savedTo !== 'picked/Images/ISO/test-40MB.bin') throw new Error(`folder: ${doneB.savedTo} ${JSON.stringify(Object.keys(tree))}`);
+  if (tree['Videos/AV sub.mp4'] !== srv.mseSha256 || doneC.savedTo !== 'picked/Videos/AV sub.mp4') throw new Error(`m3u8: ${doneC.savedTo} ${JSON.stringify(Object.keys(tree))}`);
+  if (Object.keys(tree).length !== 2) throw new Error(`left over: ${Object.keys(tree)}`);
+  return `Downloads/${asked}; ${doneB.savedTo}; ${doneC.savedTo}`;
+});
+
+await check('a link pattern [1-3] adds three downloads, previewed while typing', async () => {
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 1, speedLimitMB: 0 });
+  await page.fill('#url', `${srv.url}/file.bin?n=[01-03]`);
+  await page.dispatchEvent('#url', 'input');
+  const preview = await page.textContent('#add-msg');
+  if (!preview.includes('3') || !preview.includes('n=01') || !preview.includes('n=03')) throw new Error(`preview "${preview}"`);
+  const added = await addFromForm(`${srv.url}/file.bin?n=[01-03]`);
+  await sleep(500);
+  const all = (await engine('list')).tasks.filter((t) => /n=0\d$/.test(t.url));
+  for (const t of all) await engine('remove', { id: t.id });
+  const urls = all.map((t) => t.url.split('?')[1]).sort();
+  if (JSON.stringify(urls) !== '["n=01","n=02","n=03"]') throw new Error(`added ${urls} (${added.length} seen first)`);
+  return `"${preview}"`;
+});
+
+await check('keyboard shortcut Alt+Shift+D is registered and shown in the settings', async () => {
+  const cmds = await page.evaluate(() => chrome.commands.getAll());
+  const cmd = cmds.find((c) => c.name === 'open-manager');
+  const shown = await page.textContent('#shortcut-now');
+  if (!cmd || !/Alt\+Shift\+D/.test(cmd.shortcut) || !shown.includes(cmd.shortcut)) throw new Error(`${JSON.stringify(cmds)} / "${shown}"`);
+  return `"${shown}"`;
+});
+
 await check('checksum: a matching SHA-256 is verified after the download', async () => {
   await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6 });
   await engine('set-limit', { maxActive: 3, speedLimit: 0 });

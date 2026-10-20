@@ -449,3 +449,29 @@ test('task list filters', async () => {
   assert.ok(!matchTask(iso, { q: 'ubuntu debian' }));
   assert.ok(matchTask(zip, { q: '数据' }), 'searches the readable address');
 });
+
+test('link patterns', async () => {
+  const { expandPattern, PATTERN_MAX } = await import('../src/sniff.js');
+  assert.deepEqual(expandPattern('https://h/img[1-3].jpg'), ['https://h/img1.jpg', 'https://h/img2.jpg', 'https://h/img3.jpg']);
+  assert.deepEqual(expandPattern('https://h/p[008-011].png'), ['https://h/p008.png', 'https://h/p009.png', 'https://h/p010.png', 'https://h/p011.png']);
+  assert.deepEqual(expandPattern('https://h/[a-c]/[1-2].zip').length, 6);
+  assert.deepEqual(expandPattern('https://h/[a-c]/[1-2].zip')[1], 'https://h/a/2.zip');
+  assert.deepEqual(expandPattern('https://h/x[0-10:5]'), ['https://h/x0', 'https://h/x5', 'https://h/x10']);
+  assert.deepEqual(expandPattern('https://h/x[3-1]'), ['https://h/x3', 'https://h/x2', 'https://h/x1']);
+  assert.deepEqual(expandPattern('http://[::1]:8080/a?b[]=1'), ['http://[::1]:8080/a?b[]=1']);
+  assert.equal(expandPattern('https://h/[1-100000]').length, PATTERN_MAX);
+  assert.equal(parsePastedUrls('https://h/a[1-3].bin https://h/a2.bin').length, 3);
+});
+
+test('subfolders by file type', async () => {
+  const { resolveSubfolders, subfolderFor, cleanPath } = await import('../src/subfolders.js');
+  assert.equal(resolveSubfolders({ on: false }, (k) => k), null);
+  const map = resolveSubfolders({ on: true, names: { video: ' Videos / Movies ', image: '../..' } }, (k) => `Default ${k}`);
+  assert.equal(map.video, 'Videos/Movies');
+  assert.equal(map.image, 'Default image', 'nothing usable left: the default');
+  assert.equal(subfolderFor(map, 'clip.MP4'), 'Videos/Movies');
+  assert.equal(subfolderFor(map, 'setup.exe'), 'Default program');
+  assert.equal(subfolderFor(map, 'page.html'), '', 'other files stay at the top');
+  assert.equal(subfolderFor(null, 'clip.mp4'), '');
+  assert.equal(cleanPath('a:b\\\\c/./d'), 'a_b/c/d');
+});

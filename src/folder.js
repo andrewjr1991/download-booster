@@ -62,20 +62,28 @@ export async function uniqueName(dir, name, suffix = '') {
   return `${stem} (${Date.now()})${ext}`;
 }
 
+// The folder "a/b" inside `dir`, made if missing ('' is `dir` itself).
+export async function subDir(dir, path) {
+  for (const name of String(path || '').split('/').filter(Boolean)) dir = await dir.getDirectoryHandle(name, { create: true });
+  return dir;
+}
+
 // Give a finished file its final name in the folder (it was "<name>.part"
-// while downloading). Returns the name it got.
-export async function finalize(dir, part, name) {
+// while downloading), moved into the subfolder `sub` if one is given.
+// Returns the name it got.
+export async function finalize(dir, part, name, sub = '') {
   const fh = await dir.getFileHandle(part);
-  const target = await uniqueName(dir, name);
+  const into = await subDir(dir, sub);
+  const target = await uniqueName(into, name);
   if (typeof fh.move === 'function') {
     try {
-      await fh.move(target);
+      await (sub ? fh.move(into, target) : fh.move(target));
       return target;
     } catch {
       /* fall back to copying */
     }
   }
-  await copyInto(dir, target, await fh.getFile());
+  await copyInto(into, target, await fh.getFile());
   await dir.removeEntry(part).catch(() => {});
   return target;
 }

@@ -47,7 +47,9 @@ VIDEOS, AUDIO AND IMAGES ON A PAGE
 YOUR WAY
 • Takes over browser downloads above a size you choose, or only the ones you send to it
 • Global speed limit and number of downloads at once
-• Save straight into a folder you pick
+• Save straight into a folder you pick, sorted into subfolders by file type if you like
+• Numbered series from one link, such as img[001-120].jpg
+• Alt+Shift+D opens the download manager
 • Search and filter your downloads; open a finished file, copy its link or download it again
 • Optional notification when a download finishes or fails
 • Batch download every link on a page, with filters and renaming
@@ -87,6 +89,9 @@ Not supported: DRM-protected video, live streams, and YouTube.
 按你的习惯
 • 自动接管超过指定大小的浏览器下载，也可以只下你发给它的
 • 全局限速，设置同时下载的任务数
+• 可按文件类型自动分到子文件夹
+• 一个链接按规律批量生成，如 img[001-120].jpg
+• Alt+Shift+D 打开下载管理
 • 下载任务可搜索、按状态和类型筛选；完成的文件可直接打开、复制链接、重新下载
 • 可选：下载完成或失败时弹出通知
 • 直接保存到你选择的文件夹

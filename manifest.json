@@ -20,6 +20,14 @@
     },
     "default_popup": "src/popup.html"
   },
+  "commands": {
+    "open-manager": {
+      "suggested_key": {
+        "default": "Alt+Shift+D"
+      },
+      "description": "__MSG_commandOpenManager__"
+    }
+  },
   "background": {
     "service_worker": "src/background.js",
     "type": "module"

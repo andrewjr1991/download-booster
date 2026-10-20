@@ -2,6 +2,7 @@ import { collectLinks, prepareLinks, mergeMedia } from './sniff.js';
 import { addMedia, sizeFrom, header, compileRules } from './media.js';
 import { sanitizeFilename } from './http.js';
 import { statusText } from './client.js';
+import { resolveSubfolders, DIR_KEYS } from './subfolders.js';
 
 // MV3 service worker: only a dispatcher. It can be killed after 30 s idle, so
 // all download work lives in the offscreen document (offscreen.js).
@@ -14,6 +15,9 @@ async function getSettings() {
   const { settings } = await chrome.storage.local.get('settings');
   return { ...DEFAULT_SETTINGS, ...settings };
 }
+
+// File type -> subfolder for the user's settings, or null.
+const subfoldersOf = (s) => resolveSubfolders(s.subfolders, (k) => chrome.i18n.getMessage(DIR_KEYS[k]));
 
 // ---- offscreen engine ------------------------------------------------------
 
@@ -59,6 +63,7 @@ async function addDownload({ url, filename, takeover, source, referrer }) {
     maxConnections: s.maxConnections,
     maxActive: s.maxActive,
     speedLimit: s.speedLimitMB * MB,
+    subfolders: subfoldersOf(s),
   });
 }
 
@@ -76,6 +81,10 @@ chrome.runtime.onInstalled.addListener(() => {
     contexts: ['page'],
   });
   ensureEngine();
+});
+
+chrome.commands.onCommand.addListener((command) => {
+  if (command === 'open-manager') openManager();
 });
 
 chrome.runtime.onStartup.addListener(() => {
@@ -357,6 +366,7 @@ async function saveRecording(msg, tab) {
     size: msg.size,
     filename: sanitizeFilename(`${title}.${msg.ext}`),
     referrer: tab.url,
+    subfolders: subfoldersOf(await getSettings()),
   });
 }
 

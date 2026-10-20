@@ -70,8 +70,44 @@ export function parsePastedUrls(text) {
     String(text || '')
       .split(/\s+/)
       .filter(Boolean)
+      .flatMap(expandPattern)
       .map((url) => ({ url })),
   ).map((l) => l.url);
+}
+
+export const PATTERN_MAX = 5000;
+// [1-100] [001-120] [a-z] [0-100:5]: numbers (zero-padded like the first
+// one), or single letters, with an optional step. Not [::1] or a[]=1.
+const RANGE = /\[(?:(\d+)-(\d+)|([a-z])-([a-z])|([A-Z])-([A-Z]))(?::(\d+))?\]/;
+
+// A link with ranges in it becomes every link they stand for (all
+// combinations when there are several), at most PATTERN_MAX.
+export function expandPattern(url) {
+  const m = RANGE.exec(url);
+  if (!m) return [url];
+  const step = Math.max(1, Number(m[7]) || 1);
+  const values = [];
+  if (m[1] != null) {
+    const [a, b] = [Number(m[1]), Number(m[2])];
+    const width = m[1].length > 1 && m[1].startsWith('0') ? m[1].length : 0;
+    for (let i = a; a <= b ? i <= b : i >= b; i += a <= b ? step : -step) {
+      values.push(String(i).padStart(width, '0'));
+      if (values.length >= PATTERN_MAX) break;
+    }
+  } else {
+    const [a, b] = [(m[3] || m[5]).charCodeAt(0), (m[4] || m[6]).charCodeAt(0)];
+    for (let i = a; a <= b ? i <= b : i >= b; i += a <= b ? step : -step) values.push(String.fromCharCode(i));
+  }
+  const head = url.slice(0, m.index);
+  const rest = expandPattern(url.slice(m.index + m[0].length));
+  const out = [];
+  for (const v of values) {
+    for (const r of rest) {
+      out.push(head + v + r);
+      if (out.length >= PATTERN_MAX) return out;
+    }
+  }
+  return out;
 }
 
 // Injected into the page: must stay self-contained (no closure variables).

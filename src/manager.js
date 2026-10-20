@@ -1,4 +1,5 @@
-import { CATEGORY_ORDER, parsePastedUrls } from './sniff.js';
+import { CATEGORY_ORDER, parsePastedUrls, PATTERN_MAX } from './sniff.js';
+import { DIR_KEYS } from './subfolders.js';
 import { ICONS } from './icons.js';
 import { DEFAULT_RULES } from './media.js';
 import { pickFilename, applyRename } from './http.js';
@@ -13,6 +14,7 @@ import {
   engine,
   addUrls as addTasks,
   getSettings,
+  subfoldersOf,
   bytes,
   speed,
   duration,
@@ -242,7 +244,13 @@ async function act(action, task) {
   }
   if (action === 'redownload') {
     const s = await getSettings();
-    await engine('redownload', { id: task.id, maxConnections: s.maxConnections, maxActive: s.maxActive, speedLimit: s.speedLimitMB * MB });
+    await engine('redownload', {
+      id: task.id,
+      maxConnections: s.maxConnections,
+      maxActive: s.maxActive,
+      speedLimit: s.speedLimitMB * MB,
+      subfolders: subfoldersOf(s),
+    });
     view.group = 'all';
     return refresh();
   }
@@ -374,7 +382,19 @@ function fitUrlBox() {
   const box = $('#url');
   box.rows = Math.min(8, Math.max(1, box.value.split('\n').length));
 }
-$('#url').addEventListener('input', fitUrlBox);
+// A link with [1-100] in it: say how many links it makes before adding.
+function previewPattern() {
+  const text = $('#url').value;
+  if (!/\[[^\]]+-[^\]]+\]/.test(text)) return note('');
+  const urls = parsePastedUrls(text);
+  if (urls.length < 2) return note('');
+  const msg = t('patternPreview', [String(urls.length), urls[0], urls[urls.length - 1]]);
+  note(urls.length >= PATTERN_MAX ? `${msg} ${t('patternLimit', [String(PATTERN_MAX)])}` : msg);
+}
+$('#url').addEventListener('input', () => {
+  fitUrlBox();
+  previewPattern();
+});
 
 // ---- links sniffed from a page ------------------------------------------------------
 
@@ -661,6 +681,12 @@ async function loadSettings() {
   $('#maxActive').value = s.maxActive;
   $('#speedLimitMB').value = s.speedLimitMB || '';
   $('#notify').checked = s.notify && (await chrome.permissions.contains({ permissions: ['notifications'] }));
+  $('#subdirs-on').checked = !!s.subfolders?.on;
+  $('#subdir-rows').hidden = !s.subfolders?.on;
+  for (const el of document.querySelectorAll('.subdir')) {
+    el.placeholder = t(DIR_KEYS[el.dataset.kind]);
+    el.value = s.subfolders?.names?.[el.dataset.kind] || '';
+  }
   const rules = { ...DEFAULT_RULES, ...s.sniffRules };
   for (const k of ['video', 'audio', 'image', 'ignore']) $(`#rule-${k}`).value = rules[k];
   $('#rule-minImageKB').value = rules.minImageKB;
@@ -676,6 +702,10 @@ async function saveSettings() {
     // Empty or 0 means no limit; tenths of a MB/s are allowed.
     speedLimitMB: Math.min(100000, Math.max(0, Math.round(Number($('#speedLimitMB').value) * 10) / 10 || 0)),
     notify: $('#notify').checked,
+    subfolders: {
+      on: $('#subdirs-on').checked,
+      names: Object.fromEntries([...document.querySelectorAll('.subdir')].map((el) => [el.dataset.kind, el.value.trim()]).filter(([, v]) => v)),
+    },
     sniffRules: {
       video: $('#rule-video').value.trim(),
       audio: $('#rule-audio').value.trim(),
@@ -736,7 +766,20 @@ $('#notify').addEventListener('change', async (e) => {
   saveSettings();
 });
 for (const id of ['autoTakeover', 'minSizeMB', 'maxConnections', 'maxActive', 'speedLimitMB']) $('#' + id).addEventListener('change', saveSettings);
-for (const el of document.querySelectorAll('#settings .rule, #rule-minImageKB')) el.addEventListener('change', saveSettings);
+for (const el of document.querySelectorAll('#settings .rule, #rule-minImageKB, .subdir')) el.addEventListener('change', saveSettings);
+$('#subdirs-on').addEventListener('change', (e) => {
+  $('#subdir-rows').hidden = !e.target.checked;
+  saveSettings();
+});
+
+// The shortcut is set on Chrome's own page; show what it is now.
+async function showShortcut() {
+  const [cmd] = (await chrome.commands.getAll()).filter((c) => c.name === 'open-manager');
+  $('#shortcut-now').textContent = cmd?.shortcut ? t('shortcutNow', [cmd.shortcut]) : t('shortcutNone');
+}
+$('#shortcut-change').addEventListener('click', () => chrome.tabs.create({ url: 'chrome://extensions/shortcuts' }));
+showShortcut();
+window.addEventListener('focus', showShortcut);
 
 loadSettings().then(async () => {
   // Keep the engine's queue limit in step with the saved setting.

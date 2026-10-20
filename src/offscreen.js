@@ -5,7 +5,8 @@
 // the user picked a download folder, has them written straight into it.
 
 import { db } from './db.js';
-import { getFolder, folderPermission, uniqueName, copyInto } from './folder.js';
+import { getFolder, folderPermission, uniqueName, copyInto, subDir } from './folder.js';
+import { subfolderFor } from './subfolders.js';
 
 const tasks = new Map(); // id -> task record
 const workers = new Map(); // id -> Worker
@@ -111,6 +112,7 @@ async function handle(msg) {
         rename: t.rename,
         mirrors: t.mirrors,
         checksum: t.checksum,
+        subfolders: msg.subfolders,
       });
     case 'clear-finished':
       for (const x of [...tasks.values()]) if (x.status === 'completed') await removeTask(x);
@@ -126,7 +128,7 @@ async function usableFolder() {
   return dir && (await folderPermission(dir)) === 'granted' ? dir : null;
 }
 
-async function add({ url, filename, takeover, maxConnections, source, referrer, kind, variant, rename, mirrors, checksum }) {
+async function add({ url, filename, takeover, maxConnections, source, referrer, kind, variant, rename, mirrors, checksum, subfolders }) {
   const id = crypto.randomUUID();
   const folder = await usableFolder();
   const t = {
@@ -158,6 +160,8 @@ async function add({ url, filename, takeover, maxConnections, source, referrer, 
     // is verified against when done.
     mirrors: Array.isArray(mirrors) ? mirrors.filter((u) => /^https?:/i.test(u) && u !== url).slice(0, 8) : [],
     checksum: checksum?.algo && checksum?.hex ? { algo: checksum.algo, hex: checksum.hex } : null,
+    // File type -> subfolder it is saved into (subfolders.js), or null.
+    subfolders: subfolders && typeof subfolders === 'object' ? subfolders : null,
     verified: null,
     hls: null,
     // The picked folder (a directory handle) the file goes into, its
@@ -279,7 +283,8 @@ async function startWorker(t) {
       lastModified: t.lastModified,
       // In the folder, only what was committed (on the last pause) is there.
       segments: direct ? t.folderSegments : t.segments,
-      folder: direct ? { dir: t.folder, part: t.folderPart } : null,
+      // The subfolder by file type is picked once the file's name is known.
+      folder: direct ? { dir: t.folder, part: t.folderPart, subfolders: t.subfolders || null } : null,
       maxConnections: t.maxConnections,
       takeover: t.takeover || null,
       stats: t.stats,
@@ -410,7 +415,7 @@ async function onWorkerMessage(t, m) {
     case 'extra':
       // A second file from the same download (an HLS audio track that
       // couldn't be joined with the video): saved as its own entry.
-      importFile({ opfsName: m.opfsName, size: m.size, filename: m.filename, referrer: t.referrer }).catch((err) =>
+      importFile({ opfsName: m.opfsName, size: m.size, filename: m.filename, referrer: t.referrer, subfolders: t.subfolders }).catch((err) =>
         console.warn('could not save the extra file', err),
       );
       break;
@@ -421,7 +426,8 @@ async function onWorkerMessage(t, m) {
       t.finishedAt = Date.now();
       if (m.savedAs) {
         // Written straight into the folder: nothing left to save.
-        Object.assign(t, { filename: m.savedAs, savedTo: `${t.folder.name}/${m.savedAs}`, folderPart: null, folderSegments: null, segments: null });
+        const where = [t.folder.name, m.savedSub, m.savedAs].filter(Boolean).join('/');
+        Object.assign(t, { filename: m.savedAs, savedTo: where, folderPart: null, folderSegments: null, segments: null });
         clearRequestHeaders(t);
         setStatus(t, 'completed');
       } else await save(t);
@@ -432,7 +438,7 @@ async function onWorkerMessage(t, m) {
 
 // A file made elsewhere in the extension (a recording) that is already in
 // OPFS: list it and save it like a finished download.
-async function importFile({ opfsName, size, filename, referrer }) {
+async function importFile({ opfsName, size, filename, referrer, subfolders }) {
   const id = crypto.randomUUID();
   const now = Date.now();
   const t = {
@@ -454,6 +460,7 @@ async function importFile({ opfsName, size, filename, referrer }) {
     referrer: null,
     kind: 'record',
     hls: null,
+    subfolders: subfolders || null,
     folder: await usableFolder(),
     createdAt: now,
     finishedAt: now,
@@ -505,7 +512,7 @@ async function save(t) {
       type: 'save-file',
       id: t.id,
       url,
-      filename: t.filename || 'download',
+      filename: [subfolderFor(t.subfolders, t.filename), t.filename || 'download'].filter(Boolean).join('/'),
     });
     if (res?.error) throw new Error(res.error);
     t.downloadId = res.downloadId;
@@ -526,9 +533,11 @@ async function saveToFolder(t, file) {
   let lastErr;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const name = await uniqueName(t.folder, t.filename || 'download');
-      await copyInto(t.folder, name, file);
-      Object.assign(t, { filename: name, savedTo: `${t.folder.name}/${name}` });
+      const sub = subfolderFor(t.subfolders, t.filename);
+      const dir = await subDir(t.folder, sub);
+      const name = await uniqueName(dir, t.filename || 'download');
+      await copyInto(dir, name, file);
+      Object.assign(t, { filename: name, savedTo: [t.folder.name, sub, name].filter(Boolean).join('/') });
       return onSaved(t, null);
     } catch (err) {
       lastErr = err;

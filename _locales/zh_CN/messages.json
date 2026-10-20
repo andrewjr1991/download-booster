@@ -18,7 +18,7 @@
     "message": "下载管理"
   },
   "addPlaceholder": {
-    "message": "粘贴一个或多个下载链接（http 或 https），每行一个"
+    "message": "粘贴一个或多个下载链接，每行一个；链接里写 [1-100] 可按规律批量生成"
   },
   "addButton": {
     "message": "下载"
@@ -506,5 +506,53 @@
   },
   "notifyClickManager": {
     "message": "点击打开下载管理"
+  },
+  "patternPreview": {
+    "message": "将添加 $1 个链接：$2 … $3"
+  },
+  "patternLimit": {
+    "message": "一个规律最多生成 $1 个链接。"
+  },
+  "subfoldersOn": {
+    "message": "按文件类型分到子文件夹"
+  },
+  "subfoldersHint": {
+    "message": "文件会存进下载文件夹（或你选的文件夹）里的这些子文件夹。留空就用默认名称，也可以写多级，比如 视频/电影。"
+  },
+  "dirVideo": {
+    "message": "视频"
+  },
+  "dirAudio": {
+    "message": "音乐"
+  },
+  "dirImage": {
+    "message": "图片"
+  },
+  "dirArchive": {
+    "message": "压缩包"
+  },
+  "dirProgram": {
+    "message": "程序"
+  },
+  "dirDisk": {
+    "message": "镜像"
+  },
+  "dirDocument": {
+    "message": "文档"
+  },
+  "shortcutTitle": {
+    "message": "快捷键"
+  },
+  "shortcutNow": {
+    "message": "打开下载管理：$1"
+  },
+  "shortcutNone": {
+    "message": "打开下载管理：未设置"
+  },
+  "shortcutChange": {
+    "message": "修改…"
+  },
+  "commandOpenManager": {
+    "message": "打开下载管理"
   }
 }

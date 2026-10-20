@@ -18,6 +18,7 @@ import {
 } from './scheduler.js';
 import { parseContentRange, pickFilename, isThrottleStatus, applyRename } from './http.js';
 import { uniqueName, finalize } from './folder.js';
+import { subfolderFor } from './subfolders.js';
 import { createHash, ALGO_NAMES } from './hash.js';
 
 const TICK_MS = 500;
@@ -711,6 +712,7 @@ async function finish() {
   finished = true;
   clearInterval(ticker);
   let savedAs = null;
+  let savedSub = null;
   let verified = null;
   try {
     if (task.size != null) handle.truncate(task.size);
@@ -728,7 +730,10 @@ async function finish() {
       verified = await verify();
       if (!verified.ok) return badChecksum(verified);
     }
-    if (task.folder) savedAs = await finalize(task.folder.dir, task.folder.part, task.filename || 'download');
+    if (task.folder) {
+      savedSub = subfolderFor(task.folder.subfolders, task.filename);
+      savedAs = await finalize(task.folder.dir, task.folder.part, task.filename || 'download', savedSub);
+    }
   } catch (err) {
     finished = false;
     return fail(task.folder ? 'folder' : 'engine', err);
@@ -737,6 +742,7 @@ async function finish() {
     type: 'done',
     size: task.size,
     savedAs,
+    savedSub,
     verified,
     mirrors: mirrorStats(),
     segments: segments.map(({ id, start, end, pos }) => ({ id, start, end, pos })),
