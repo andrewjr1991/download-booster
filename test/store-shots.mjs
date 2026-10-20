@@ -196,16 +196,7 @@ for (const locale of LOCALES) {
 
     // 4. Settings, opened.
     for (const id of running) await engine('pause', { id });
-    await page.evaluate(() => {
-      document.querySelector('#settings').open = true;
-      document.querySelector('#add-more').open = false;
-    });
-    // Scroll the settings up to just under the sticky header.
-    await page.evaluate(() => {
-      const top = document.querySelector('#settings').getBoundingClientRect().top + scrollY;
-      const header = document.querySelector('header')?.getBoundingClientRect().height || 0;
-      scrollTo(0, top - header - 16);
-    });
+    await page.click('#nav-settings');
     await sleep(500);
     const settings = await page.screenshot();
     await frame(fctx, path.join(outDir, '4-settings.png'), settings, C.settings, { width: 1280, height: 800, shotWidth: 1000 });

@@ -477,18 +477,6 @@
   "taskNoMatch": {
     "message": "没有符合条件的下载任务。"
   },
-  "groupAll": {
-    "message": "全部 $1"
-  },
-  "groupActive": {
-    "message": "进行中 $1"
-  },
-  "groupCompleted": {
-    "message": "已完成 $1"
-  },
-  "groupError": {
-    "message": "失败 $1"
-  },
   "notifySetting": {
     "message": "下载完成或失败时弹出通知"
   },
@@ -554,5 +542,80 @@
   },
   "commandOpenManager": {
     "message": "打开下载管理"
+  },
+  "navStates": {
+    "message": "按状态查看下载"
+  },
+  "navTypes": {
+    "message": "文件类型"
+  },
+  "navAll": {
+    "message": "全部下载"
+  },
+  "navActive": {
+    "message": "进行中"
+  },
+  "navCompleted": {
+    "message": "已完成"
+  },
+  "navFailed": {
+    "message": "失败"
+  },
+  "newDownload": {
+    "message": "新建下载"
+  },
+  "pauseAll": {
+    "message": "全部暂停"
+  },
+  "resumeAll": {
+    "message": "全部开始"
+  },
+  "colName": {
+    "message": "名称"
+  },
+  "colSize": {
+    "message": "大小"
+  },
+  "colProgress": {
+    "message": "进度"
+  },
+  "colSpeed": {
+    "message": "速度"
+  },
+  "colAdded": {
+    "message": "添加时间"
+  },
+  "setDownloads": {
+    "message": "下载"
+  },
+  "statusCounts": {
+    "message": "进行中 $1 · 已完成 $2 · 共 $3"
+  },
+  "pick": {
+    "message": "选择"
+  },
+  "unpick": {
+    "message": "取消选择"
+  },
+  "bulkPause": {
+    "message": "暂停"
+  },
+  "bulkResume": {
+    "message": "继续"
+  },
+  "bulkCopy": {
+    "message": "复制链接"
+  },
+  "bulkRemove": {
+    "message": "移除"
+  },
+  "bulkNone": {
+    "message": "取消选择"
+  },
+  "pickedCount": {
+    "message": "已选 $1 项"
+  },
+  "confirmRemove": {
+    "message": "其中 $1 个下载还没完成，确定移除吗？已下载的部分会被删除。"
   }
 }

@@ -67,9 +67,10 @@ await check('notifications: off by default, shown once turned on', async () => {
   await waitFor(async () => (await engine('list')).tasks.find((t) => t.id === id && t.status === 'completed'));
   await sleep(500);
   if ((await sw.evaluate(() => self.shown.length)) !== 0) throw new Error('notified while turned off');
-  await page.click('#settings summary');
+  await page.click('#nav-settings');
   await page.check('#notify');
   await waitFor(() => page.evaluate(async () => (await chrome.storage.local.get('settings')).settings?.notify));
+  await page.click('#task-groups button[data-value="all"]');
   const { id: id2 } = await engine('add', { url: `${srv.url}/file.bin?loud`, maxConnections: 6 });
   const shown = await waitFor(() => sw.evaluate(() => self.shown[0]));
   const task = (await engine('list')).tasks.find((t) => t.id === id2);

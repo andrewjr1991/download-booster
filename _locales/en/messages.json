@@ -477,18 +477,6 @@
   "taskNoMatch": {
     "message": "No downloads match."
   },
-  "groupAll": {
-    "message": "All $1"
-  },
-  "groupActive": {
-    "message": "In progress $1"
-  },
-  "groupCompleted": {
-    "message": "Completed $1"
-  },
-  "groupError": {
-    "message": "Failed $1"
-  },
   "notifySetting": {
     "message": "Show a notification when a download finishes or fails"
   },
@@ -554,5 +542,80 @@
   },
   "commandOpenManager": {
     "message": "Open the download manager"
+  },
+  "navStates": {
+    "message": "Downloads by state"
+  },
+  "navTypes": {
+    "message": "File types"
+  },
+  "navAll": {
+    "message": "All downloads"
+  },
+  "navActive": {
+    "message": "In progress"
+  },
+  "navCompleted": {
+    "message": "Completed"
+  },
+  "navFailed": {
+    "message": "Failed"
+  },
+  "newDownload": {
+    "message": "New download"
+  },
+  "pauseAll": {
+    "message": "Pause all"
+  },
+  "resumeAll": {
+    "message": "Resume all"
+  },
+  "colName": {
+    "message": "Name"
+  },
+  "colSize": {
+    "message": "Size"
+  },
+  "colProgress": {
+    "message": "Progress"
+  },
+  "colSpeed": {
+    "message": "Speed"
+  },
+  "colAdded": {
+    "message": "Added"
+  },
+  "setDownloads": {
+    "message": "Downloading"
+  },
+  "statusCounts": {
+    "message": "$1 in progress · $2 completed · $3 in all"
+  },
+  "pick": {
+    "message": "Select"
+  },
+  "unpick": {
+    "message": "Deselect"
+  },
+  "bulkPause": {
+    "message": "Pause"
+  },
+  "bulkResume": {
+    "message": "Resume"
+  },
+  "bulkCopy": {
+    "message": "Copy links"
+  },
+  "bulkRemove": {
+    "message": "Remove"
+  },
+  "bulkNone": {
+    "message": "Clear selection"
+  },
+  "pickedCount": {
+    "message": "$1 selected"
+  },
+  "confirmRemove": {
+    "message": "$1 of these downloads are not finished. Remove them anyway? What they downloaded so far is deleted."
   }
 }

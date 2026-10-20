@@ -382,7 +382,7 @@ await check('manager sniff list downloads a page’s m3u8 as one joined video', 
 
 await check('batch: sniffing rules, copying links and a rename rule', async () => {
   // Rules typed into the manager's settings: show small images, ignore "photo".
-  await page.evaluate(() => (document.querySelector('#settings').open = true));
+  await page.click('#nav-settings');
   await page.fill('#rule-minImageKB', '1');
   await page.dispatchEvent('#rule-minImageKB', 'change');
   await page.fill('#rule-ignore', 'photo');
@@ -398,6 +398,7 @@ await check('batch: sniffing rules, copying links and a rename rule', async () =
   await page.fill('#rule-minImageKB', '10');
   await page.fill('#rule-ignore', '');
   await page.dispatchEvent('#rule-ignore', 'change');
+  await page.click('#task-groups button[data-value="all"]');
 
   // Rename and copy in the page link list.
   const before = (await engine('list')).tasks.map((t) => t.id);
@@ -1085,10 +1086,9 @@ await check('task list: filter by state and type, search by name', async () => {
   await waitTask(pausedId, (t) => t.downloaded > 0);
   await engine('pause', { id: pausedId });
   await waitTask(pausedId, (t) => t.status === 'paused');
-  await page.waitForSelector('#task-tools:not([hidden])');
   const cards = () => page.$$eval('#tasks .task .name', (els) => els.map((e) => e.title));
   const chips = await page.$$eval('#task-groups button', (els) => els.map((e) => e.textContent));
-  if (chips.length !== 3) throw new Error(`state chips: ${chips}`);
+  if (chips.length !== 4 || !chips[0].endsWith('2')) throw new Error(`sidebar: ${chips}`);
   await page.click('#task-groups button[data-value="completed"]');
   let shown = await cards();
   if (shown.length !== 1 || !shown[0].includes('list=done')) throw new Error(`completed shows ${shown}`);
@@ -1106,7 +1106,40 @@ await check('task list: filter by state and type, search by name', async () => {
   shown = await cards();
   if (shown.length !== 2) throw new Error(`cleared search shows ${shown}`);
   await engine('remove', { id: pausedId });
-  return `chips "${chips.join(' / ')}"; ${done.done.filename} kept`;
+  return `sidebar "${chips.join(' / ')}"; ${done.done.filename} kept`;
+});
+
+await check('list: sort by a column, right-click menu, pick several and remove them', async () => {
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 1 });
+  for (const t of (await engine('list')).tasks) await engine('remove', { id: t.id });
+  const ids = [];
+  for (const q of ['b', 'a', 'c']) ids.push((await engine('add', { url: `${srv.url}/file.bin?pick=${q}`, maxConnections: 1, filename: `${q}.bin` })).id);
+  for (const id of ids) await engine('pause', { id });
+  await page.waitForFunction(() => document.querySelectorAll('#tasks .task').length === 3);
+  const names = () => page.$$eval('#tasks .task .name', (els) => els.map((e) => e.title.split('=').pop()));
+  await page.click('#thead [data-sort="name"]');
+  const asc = (await names()).join('');
+  await page.click('#thead [data-sort="name"]');
+  const desc = (await names()).join('');
+  if (asc !== 'abc' || desc !== 'cba') throw new Error(`sorted ${asc} / ${desc}`);
+  await page.click('#thead [data-sort="date"]');
+  // Right-click: the row's actions with their names.
+  await page.locator('#tasks .task').first().click({ button: 'right', position: { x: 200, y: 20 } });
+  const menu = await page.$$eval('#menu button', (els) => els.map((e) => e.textContent));
+  if (!menu.includes('Resume') || !menu.includes('Copy link')) throw new Error(`menu ${menu}`);
+  await page.keyboard.press('Escape');
+  // Pick two and remove them; they are unfinished, so it asks first.
+  const rows = page.locator('#tasks .task .pick');
+  await rows.nth(0).check();
+  await rows.nth(1).check();
+  const count = await page.textContent('#bulk-count');
+  page.once('dialog', (d) => d.accept());
+  await page.click('#bulk [data-bulk="remove"]');
+  await page.waitForFunction(() => document.querySelectorAll('#tasks .task').length === 1);
+  const left = (await engine('list')).tasks.length;
+  if (left !== 1 || !(await page.isHidden('#bulk'))) throw new Error(`${left} left`);
+  for (const t of (await engine('list')).tasks) await engine('remove', { id: t.id });
+  return `name ${asc}/${desc}, menu "${menu.join(', ')}", "${count}" removed`;
 });
 
 await check('completed download: copy its link, download it again', async () => {

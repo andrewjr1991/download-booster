@@ -8,189 +8,249 @@
     <link rel="stylesheet" href="ui.css" />
     <link rel="stylesheet" href="manager.css" />
   </head>
-  <body>
-    <header>
-      <div class="head-inner">
+  <body class="app">
+    <aside class="side">
+      <div class="brand">
         <img src="../icons/icon48.png" alt="" width="28" height="28" />
-        <h1 data-i18n="managerTitle">Downloads</h1>
-        <button id="clear" class="ghost" data-i18n="clearFinished">Clear completed</button>
+        <span data-i18n="extShortName"></span>
       </div>
-    </header>
+      <button id="new-download" class="primary new-btn"></button>
+      <nav id="task-groups" class="nav" data-i18n-aria-label="navStates"></nav>
+      <div id="kinds-title" class="nav-title" data-i18n="navTypes"></div>
+      <nav id="task-kinds" class="nav"></nav>
+      <div class="side-foot">
+        <nav class="nav">
+          <button id="nav-settings" data-value="settings"></button>
+        </nav>
+      </div>
+    </aside>
 
-    <main>
-      <form id="add">
-        <textarea id="url" rows="1" required data-i18n-placeholder="addPlaceholder" autocomplete="off" spellcheck="false"></textarea>
-        <button type="submit" class="primary" data-i18n="addButton">Download</button>
-      </form>
-      <details id="add-more">
-        <summary data-i18n="addMore"></summary>
-        <label class="row">
-          <span data-i18n="checksumLabel"></span>
-          <input type="text" id="checksum" class="wide" autocomplete="off" spellcheck="false" data-i18n-placeholder="checksumPlaceholder" />
-        </label>
-        <label class="row mirrors-row">
-          <span data-i18n="mirrorsLabel"></span>
-          <textarea id="mirrors" class="wide" rows="2" spellcheck="false" data-i18n-placeholder="mirrorsPlaceholder"></textarea>
-        </label>
-      </details>
-      <p id="add-msg" class="hint" hidden></p>
-      <p id="total" class="hint"></p>
+    <div class="main">
+      <header class="toolbar">
+        <h1 id="view-title"></h1>
+        <div class="search">
+          <input id="task-search" type="search" data-i18n-placeholder="taskSearchPlaceholder" autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="tool-buttons" id="list-tools">
+          <button id="pause-all" class="icon" data-i18n-title="pauseAll"></button>
+          <button id="resume-all" class="icon" data-i18n-title="resumeAll"></button>
+          <button id="clear" class="ghost" data-i18n="clearFinished">Clear completed</button>
+        </div>
+      </header>
 
-      <section id="sniff" hidden>
-        <div class="sniff-head">
-          <h2 data-i18n="sniffTitle"></h2>
-          <button id="sniff-close" class="ghost" data-i18n="close"></button>
-        </div>
-        <p class="hint" id="sniff-source"></p>
-        <div id="sniff-filters" class="chips"></div>
-        <div class="sniff-tools">
-          <label><input type="checkbox" id="sniff-all" /> <span data-i18n="selectAll"></span></label>
-          <input id="sniff-search" type="search" data-i18n-placeholder="filterPlaceholder" />
-        </div>
-        <ul id="sniff-list"></ul>
-        <p id="sniff-empty" class="hint" data-i18n="sniffEmpty" hidden></p>
-        <div class="sniff-rename">
-          <input id="sniff-rename" type="text" data-i18n-placeholder="renamePlaceholder" autocomplete="off" spellcheck="false" />
-          <p class="hint" id="sniff-rename-preview"></p>
-        </div>
-        <div class="sniff-actions">
-          <button id="sniff-copy" class="ghost"></button>
-          <button id="sniff-go" class="primary"></button>
-        </div>
-      </section>
-      <div id="sniff-preview" hidden>
-        <div class="sp-box">
-          <div class="sp-head">
-            <span id="sp-name"></span>
-            <button id="sp-close" class="ghost" data-i18n="close"></button>
+      <div class="content">
+        <section id="list-view">
+          <form id="add">
+            <textarea id="url" rows="1" required data-i18n-placeholder="addPlaceholder" autocomplete="off" spellcheck="false"></textarea>
+            <button type="submit" class="primary" data-i18n="addButton">Download</button>
+          </form>
+          <details id="add-more">
+            <summary data-i18n="addMore"></summary>
+            <label class="row">
+              <span data-i18n="checksumLabel"></span>
+              <input type="text" id="checksum" class="wide" autocomplete="off" spellcheck="false" data-i18n-placeholder="checksumPlaceholder" />
+            </label>
+            <label class="row mirrors-row">
+              <span data-i18n="mirrorsLabel"></span>
+              <textarea id="mirrors" class="wide" rows="2" spellcheck="false" data-i18n-placeholder="mirrorsPlaceholder"></textarea>
+            </label>
+          </details>
+          <p id="add-msg" class="hint" hidden></p>
+
+        <section id="sniff" hidden>
+          <div class="sniff-head">
+            <h2 data-i18n="sniffTitle"></h2>
+            <button id="sniff-close" class="ghost" data-i18n="close"></button>
           </div>
-          <div id="sp-stage"></div>
-          <p id="sp-info" class="hint"></p>
+          <p class="hint" id="sniff-source"></p>
+          <div id="sniff-filters" class="chips"></div>
+          <div class="sniff-tools">
+            <label><input type="checkbox" id="sniff-all" /> <span data-i18n="selectAll"></span></label>
+            <input id="sniff-search" type="search" data-i18n-placeholder="filterPlaceholder" />
+          </div>
+          <ul id="sniff-list"></ul>
+          <p id="sniff-empty" class="hint" data-i18n="sniffEmpty" hidden></p>
+          <div class="sniff-rename">
+            <input id="sniff-rename" type="text" data-i18n-placeholder="renamePlaceholder" autocomplete="off" spellcheck="false" />
+            <p class="hint" id="sniff-rename-preview"></p>
+          </div>
+          <div class="sniff-actions">
+            <button id="sniff-copy" class="ghost"></button>
+            <button id="sniff-go" class="primary"></button>
+          </div>
+        </section>
+        <div id="sniff-preview" hidden>
+          <div class="sp-box">
+            <div class="sp-head">
+              <span id="sp-name"></span>
+              <button id="sp-close" class="ghost" data-i18n="close"></button>
+            </div>
+            <div id="sp-stage"></div>
+            <p id="sp-info" class="hint"></p>
+          </div>
         </div>
+
+          <div id="bulk" class="bulk" hidden>
+            <span id="bulk-count"></span>
+            <button type="button" data-bulk="pause"></button>
+            <button type="button" data-bulk="resume"></button>
+            <button type="button" data-bulk="copy"></button>
+            <button type="button" data-bulk="remove"></button>
+            <button type="button" class="ghost" data-bulk="none"></button>
+          </div>
+          <div class="table">
+            <div class="thead" id="thead">
+              <label class="c-check"><input type="checkbox" id="select-all" data-i18n-aria-label="selectAll" /></label>
+              <button type="button" class="c-name" data-sort="name" data-i18n="colName"></button>
+              <button type="button" class="c-size" data-sort="size" data-i18n="colSize"></button>
+              <span class="c-progress" data-i18n="colProgress"></span>
+              <span class="c-speed" data-i18n="colSpeed"></span>
+              <button type="button" class="c-date" data-sort="date" data-i18n="colAdded"></button>
+              <span class="c-actions"></span>
+            </div>
+            <section id="tasks" aria-live="polite"></section>
+          </div>
+          <p id="empty" class="empty" data-i18n="empty" hidden></p>
+          <p id="no-match" class="empty" data-i18n="taskNoMatch" hidden></p>
+        </section>
+
+        <section id="settings" hidden>
+          <div class="settings-group">
+            <h3 data-i18n="setDownloads"></h3>
+            <label class="row">
+              <input type="checkbox" id="autoTakeover" />
+              <span data-i18n="autoTakeover"></span>
+            </label>
+            <label class="row">
+              <span data-i18n="minSize"></span>
+              <input type="number" id="minSizeMB" min="1" max="100000" />
+            </label>
+            <label class="row">
+              <span data-i18n="maxConnections"></span>
+              <input type="number" id="maxConnections" min="1" max="16" />
+            </label>
+            <label class="row">
+              <span data-i18n="maxActive"></span>
+              <input type="number" id="maxActive" min="1" max="10" />
+            </label>
+            <label class="row">
+              <span data-i18n="speedLimit"></span>
+              <input type="number" id="speedLimitMB" min="0" step="0.1" data-i18n-placeholder="noLimit" />
+            </label>
+            <p class="hint" data-i18n="settingsHint"></p>
+            <label class="row">
+              <input type="checkbox" id="notify" />
+              <span data-i18n="notifySetting"></span>
+            </label>
+          </div>
+          <div class="settings-group">
+            <h3 data-i18n="saveFolder"></h3>
+            <div class="row folder-row">
+              <span id="folder-name" class="folder-name"></span>
+              <button type="button" id="folder-choose" data-i18n="folderChoose"></button>
+              <button type="button" id="folder-grant" class="primary" data-i18n="folderGrant" hidden></button>
+              <button type="button" id="folder-reset" class="ghost" data-i18n="folderReset" hidden></button>
+            </div>
+            <p class="hint" id="folder-hint"></p>
+            <label class="row">
+              <input type="checkbox" id="subdirs-on" />
+              <span data-i18n="subfoldersOn"></span>
+            </label>
+            <div id="subdir-rows" class="subdir-rows" hidden>
+              <label class="row">
+                <span data-i18n="catVideo"></span>
+                <input type="text" class="subdir" data-kind="video" autocomplete="off" spellcheck="false" />
+              </label>
+              <label class="row">
+                <span data-i18n="catAudio"></span>
+                <input type="text" class="subdir" data-kind="audio" autocomplete="off" spellcheck="false" />
+              </label>
+              <label class="row">
+                <span data-i18n="catImage"></span>
+                <input type="text" class="subdir" data-kind="image" autocomplete="off" spellcheck="false" />
+              </label>
+              <label class="row">
+                <span data-i18n="catArchive"></span>
+                <input type="text" class="subdir" data-kind="archive" autocomplete="off" spellcheck="false" />
+              </label>
+              <label class="row">
+                <span data-i18n="catProgram"></span>
+                <input type="text" class="subdir" data-kind="program" autocomplete="off" spellcheck="false" />
+              </label>
+              <label class="row">
+                <span data-i18n="catDisk"></span>
+                <input type="text" class="subdir" data-kind="disk" autocomplete="off" spellcheck="false" />
+              </label>
+              <label class="row">
+                <span data-i18n="catDocument"></span>
+                <input type="text" class="subdir" data-kind="document" autocomplete="off" spellcheck="false" />
+              </label>
+              <p class="hint" data-i18n="subfoldersHint"></p>
+            </div>
+          </div>
+          <div class="settings-group">
+            <h3 data-i18n="shortcutTitle"></h3>
+            <div class="row">
+              <span id="shortcut-now"></span>
+              <button type="button" id="shortcut-change" data-i18n="shortcutChange"></button>
+            </div>
+          </div>
+          <div class="settings-group">
+            <h3 data-i18n="sniffRules"></h3>
+            <p class="hint" data-i18n="sniffRulesHint"></p>
+            <label class="row">
+              <span data-i18n="ruleVideo"></span>
+              <input type="text" id="rule-video" class="rule" data-i18n-placeholder="ruleExtPlaceholder" />
+            </label>
+            <label class="row">
+              <span data-i18n="ruleAudio"></span>
+              <input type="text" id="rule-audio" class="rule" data-i18n-placeholder="ruleAudioPlaceholder" />
+            </label>
+            <label class="row">
+              <span data-i18n="ruleImage"></span>
+              <input type="text" id="rule-image" class="rule" data-i18n-placeholder="ruleImagePlaceholder" />
+            </label>
+            <label class="row">
+              <span data-i18n="ruleMinImage"></span>
+              <input type="number" id="rule-minImageKB" min="0" max="100000" />
+            </label>
+            <label class="row rule-ignore">
+              <span data-i18n="ruleIgnore"></span>
+              <textarea id="rule-ignore" class="rule" rows="2" data-i18n-placeholder="ruleIgnorePlaceholder" spellcheck="false"></textarea>
+            </label>
+          </div>
+        </section>
       </div>
 
-      <div id="task-tools" hidden>
-        <div id="task-groups" class="chips"></div>
-        <div id="task-kinds" class="chips"></div>
-        <input id="task-search" type="search" data-i18n-placeholder="taskSearchPlaceholder" autocomplete="off" spellcheck="false" />
-      </div>
-      <section id="tasks" aria-live="polite"></section>
-      <p id="empty" class="empty" data-i18n="empty" hidden></p>
-      <p id="no-match" class="empty" data-i18n="taskNoMatch" hidden></p>
+      <footer class="statusbar">
+        <span id="total"></span>
+        <span id="counts"></span>
+      </footer>
+    </div>
 
-      <details id="settings">
-        <summary data-i18n="settings">Settings</summary>
-        <label class="row">
-          <input type="checkbox" id="autoTakeover" />
-          <span data-i18n="autoTakeover"></span>
-        </label>
-        <label class="row">
-          <span data-i18n="minSize"></span>
-          <input type="number" id="minSizeMB" min="1" max="100000" />
-        </label>
-        <label class="row">
-          <span data-i18n="maxConnections"></span>
-          <input type="number" id="maxConnections" min="1" max="16" />
-        </label>
-        <label class="row">
-          <span data-i18n="maxActive"></span>
-          <input type="number" id="maxActive" min="1" max="10" />
-        </label>
-        <label class="row">
-          <span data-i18n="speedLimit"></span>
-          <input type="number" id="speedLimitMB" min="0" step="0.1" data-i18n-placeholder="noLimit" />
-        </label>
-        <p class="hint" data-i18n="settingsHint"></p>
-        <label class="row">
-          <input type="checkbox" id="notify" />
-          <span data-i18n="notifySetting"></span>
-        </label>
-        <h3 data-i18n="saveFolder"></h3>
-        <div class="row folder-row">
-          <span id="folder-name" class="folder-name"></span>
-          <button type="button" id="folder-choose" data-i18n="folderChoose"></button>
-          <button type="button" id="folder-grant" class="primary" data-i18n="folderGrant" hidden></button>
-          <button type="button" id="folder-reset" class="ghost" data-i18n="folderReset" hidden></button>
-        </div>
-        <p class="hint" id="folder-hint"></p>
-        <label class="row">
-          <input type="checkbox" id="subdirs-on" />
-          <span data-i18n="subfoldersOn"></span>
-        </label>
-        <div id="subdir-rows" class="subdir-rows" hidden>
-          <label class="row">
-            <span data-i18n="catVideo"></span>
-            <input type="text" class="subdir" data-kind="video" autocomplete="off" spellcheck="false" />
-          </label>
-          <label class="row">
-            <span data-i18n="catAudio"></span>
-            <input type="text" class="subdir" data-kind="audio" autocomplete="off" spellcheck="false" />
-          </label>
-          <label class="row">
-            <span data-i18n="catImage"></span>
-            <input type="text" class="subdir" data-kind="image" autocomplete="off" spellcheck="false" />
-          </label>
-          <label class="row">
-            <span data-i18n="catArchive"></span>
-            <input type="text" class="subdir" data-kind="archive" autocomplete="off" spellcheck="false" />
-          </label>
-          <label class="row">
-            <span data-i18n="catProgram"></span>
-            <input type="text" class="subdir" data-kind="program" autocomplete="off" spellcheck="false" />
-          </label>
-          <label class="row">
-            <span data-i18n="catDisk"></span>
-            <input type="text" class="subdir" data-kind="disk" autocomplete="off" spellcheck="false" />
-          </label>
-          <label class="row">
-            <span data-i18n="catDocument"></span>
-            <input type="text" class="subdir" data-kind="document" autocomplete="off" spellcheck="false" />
-          </label>
-          <p class="hint" data-i18n="subfoldersHint"></p>
-        </div>
-        <h3 data-i18n="shortcutTitle"></h3>
-        <div class="row">
-          <span id="shortcut-now"></span>
-          <button type="button" id="shortcut-change" data-i18n="shortcutChange"></button>
-        </div>
-        <h3 data-i18n="sniffRules"></h3>
-        <p class="hint" data-i18n="sniffRulesHint"></p>
-        <label class="row">
-          <span data-i18n="ruleVideo"></span>
-          <input type="text" id="rule-video" class="rule" data-i18n-placeholder="ruleExtPlaceholder" />
-        </label>
-        <label class="row">
-          <span data-i18n="ruleAudio"></span>
-          <input type="text" id="rule-audio" class="rule" data-i18n-placeholder="ruleAudioPlaceholder" />
-        </label>
-        <label class="row">
-          <span data-i18n="ruleImage"></span>
-          <input type="text" id="rule-image" class="rule" data-i18n-placeholder="ruleImagePlaceholder" />
-        </label>
-        <label class="row">
-          <span data-i18n="ruleMinImage"></span>
-          <input type="number" id="rule-minImageKB" min="0" max="100000" />
-        </label>
-        <label class="row rule-ignore">
-          <span data-i18n="ruleIgnore"></span>
-          <textarea id="rule-ignore" class="rule" rows="2" data-i18n-placeholder="ruleIgnorePlaceholder" spellcheck="false"></textarea>
-        </label>
-      </details>
-    </main>
+    <div id="menu" class="menu" role="menu" hidden></div>
 
     <template id="task-tpl">
       <article class="task">
-        <span class="ftype"></span>
-        <div class="body">
-          <div class="top">
-            <span class="name"></span>
-            <span class="status"></span>
+        <label class="c-check"><input type="checkbox" class="pick" /></label>
+        <div class="c-name">
+          <span class="ftype"></span>
+          <div class="body">
+            <div class="top">
+              <span class="name"></span>
+            </div>
+            <div class="meta"></div>
+            <div class="compare hint"></div>
           </div>
-          <canvas class="bar" height="8"></canvas>
-          <div class="meta"></div>
-          <div class="compare hint"></div>
         </div>
-        <div class="actions"></div>
+        <span class="c-size size"></span>
+        <div class="c-progress">
+          <canvas class="bar" height="6"></canvas>
+          <span class="status"></span>
+        </div>
+        <span class="c-speed speed"></span>
+        <span class="c-date date"></span>
+        <div class="c-actions actions"></div>
       </article>
     </template>
 
