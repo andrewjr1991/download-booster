@@ -3,6 +3,7 @@
 
 import { ICONS } from './icons.js';
 import { t, localize, engine, addUrls, bytes, speed, duration, statusText } from './client.js';
+import { taskKind } from './tasks-filter.js';
 import { variantLabel, audioFor } from './hls.js';
 import { parseManifest } from './dash.js';
 
@@ -21,6 +22,7 @@ const state = {
 };
 
 $('#open-manager').innerHTML = ICONS.open;
+$('#open-manager').append(t('managerTitle'));
 $('#sniff-links').innerHTML = ICONS.link;
 $('#sniff-links').append(t('sniffLinks'));
 
@@ -472,13 +474,7 @@ function fraction(task) {
 function taskRow(task) {
   const li = document.createElement('li');
   li.dataset.s = task.status;
-  const kind = /\.(mp4|mkv|webm|mov|avi|flv|m4v|ts)$/i.test(task.filename || '')
-    ? 'video'
-    : /\.(mp3|m4a|flac|wav|ogg|opus|aac)$/i.test(task.filename || '')
-      ? 'audio'
-      : /\.(jpe?g|png|gif|webp|avif|bmp|svg)$/i.test(task.filename || '')
-        ? 'image'
-        : 'other';
+  const kind = taskKind(task);
   const ft = document.createElement('span');
   ft.className = 'ftype';
   ft.dataset.kind = kind;
@@ -498,12 +494,17 @@ function taskRow(task) {
   bar.append(fill);
   const sub = document.createElement('span');
   sub.className = 'sub';
-  const parts = [statusText(task)];
+  const pill = document.createElement('span');
+  pill.className = 'status';
+  pill.dataset.s = task.status;
+  pill.textContent = statusText(task);
+  pill.title = task.error?.message || pill.textContent;
+  const parts = [];
   if (task.size) parts.push(`${bytes(task.status === 'completed' ? task.size : task.downloaded)} / ${bytes(task.size)}`);
   else if (task.hls && task.status !== 'completed') parts.push(bytes(task.downloaded), t('pieces', [`${task.hls.done}/${task.hls.total}`]));
   if (task.status === 'downloading') parts.push(speed(task.speed));
   if (task.status === 'completed' && task.savedTo) parts.push(t('savedTo', [task.savedTo]));
-  sub.textContent = parts.join(' · ');
+  sub.append(pill, parts.join(' · '));
   info.append(name, bar, sub);
 
   const act = document.createElement('button');

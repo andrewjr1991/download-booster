@@ -10,7 +10,22 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 10px 6px 14px;
+  padding: 10px 10px 10px 14px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+#open-manager {
+  width: auto;
+  gap: 5px;
+  padding: 0 8px;
+  font-size: 12.5px;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+}
+#open-manager svg {
+  width: 15px;
+  height: 15px;
 }
 .brand {
   font-weight: 700;
@@ -26,24 +41,24 @@ body {
 .tabs {
   display: flex;
   gap: 4px;
-  margin: 0 10px;
-  padding: 3px;
-  background: var(--track);
-  border-radius: 10px;
+  margin: 10px 10px 0;
 }
 .tabs button {
   flex: 1;
   border: none;
   background: transparent;
   color: var(--muted);
-  padding: 5px 8px;
+  padding: 6px 8px;
   font-weight: 600;
   font-size: 13px;
+  border-radius: 8px;
+}
+.tabs button:hover:not(:disabled) {
+  background: var(--raised);
 }
 .tabs button[aria-selected='true'] {
-  background: var(--card);
-  color: var(--text);
-  box-shadow: var(--shadow);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .count {
   font-weight: 600;
@@ -72,11 +87,14 @@ body {
 }
 .list {
   list-style: none;
-  margin: 6px 0 0;
+  margin: 8px 0 0;
   padding: 0;
   overflow-y: auto;
   min-height: 0;
   flex: 1;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
 }
 .list:empty {
   display: none;
@@ -85,12 +103,19 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 7px 6px;
-  border-radius: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.list li:last-child {
+  border-bottom: 0;
 }
 .list li:hover {
-  background: var(--card);
-  box-shadow: var(--shadow);
+  background: var(--raised);
+}
+.list .status {
+  font-size: 10.5px;
+  padding: 0 6px;
+  margin-right: 6px;
 }
 .list .info {
   flex: 1;
@@ -122,9 +147,9 @@ body {
   background: var(--track);
 }
 .mini-bar {
-  height: 4px;
-  margin: 4px 0 2px;
-  border-radius: 2px;
+  height: 5px;
+  margin: 5px 0 3px;
+  border-radius: 3px;
   background: var(--track);
   overflow: hidden;
 }
@@ -175,7 +200,9 @@ li[data-s='error'] .mini-bar > i {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px 10px;
+  margin-top: 10px;
+  padding: 6px 10px;
+  background: var(--card);
   border-top: 1px solid var(--border);
 }
 .foot button {
@@ -201,6 +228,11 @@ li[data-s='error'] .mini-bar > i {
   gap: 8px;
   align-content: start;
   padding: 2px;
+  background: transparent;
+  border: 0;
+}
+.list.grid li.tile {
+  border-bottom: 0;
 }
 .list.grid li.tile {
   position: relative;

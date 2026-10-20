@@ -1,18 +1,23 @@
 import { collectLinks, prepareLinks, mergeMedia } from './sniff.js';
 import { addMedia, sizeFrom, header, compileRules } from './media.js';
 import { sanitizeFilename } from './http.js';
+import { statusText } from './client.js';
+import { resolveSubfolders, DIR_KEYS } from './subfolders.js';
 
 // MV3 service worker: only a dispatcher. It can be killed after 30 s idle, so
 // all download work lives in the offscreen document (offscreen.js).
 
 const MB = 1024 * 1024;
-const DEFAULT_SETTINGS = { autoTakeover: true, minSizeMB: 20, maxConnections: 6, maxActive: 3, speedLimitMB: 0 };
+const DEFAULT_SETTINGS = { autoTakeover: true, minSizeMB: 20, maxConnections: 6, maxActive: 3, speedLimitMB: 0, notify: false };
 const MANAGER_URL = chrome.runtime.getURL('src/manager.html');
 
 async function getSettings() {
   const { settings } = await chrome.storage.local.get('settings');
   return { ...DEFAULT_SETTINGS, ...settings };
 }
+
+// File type -> subfolder for the user's settings, or null.
+const subfoldersOf = (s) => resolveSubfolders(s.subfolders, (k) => chrome.i18n.getMessage(DIR_KEYS[k]));
 
 // ---- offscreen engine ------------------------------------------------------
 
@@ -58,6 +63,7 @@ async function addDownload({ url, filename, takeover, source, referrer }) {
     maxConnections: s.maxConnections,
     maxActive: s.maxActive,
     speedLimit: s.speedLimitMB * MB,
+    subfolders: subfoldersOf(s),
   });
 }
 
@@ -75,6 +81,10 @@ chrome.runtime.onInstalled.addListener(() => {
     contexts: ['page'],
   });
   ensureEngine();
+});
+
+chrome.commands.onCommand.addListener((command) => {
+  if (command === 'open-manager') openManager();
 });
 
 chrome.runtime.onStartup.addListener(() => {
@@ -124,6 +134,58 @@ async function openManager(query = '') {
   await chrome.tabs.update(open.tabId, query ? { url: MANAGER_URL + query, active: true } : { active: true });
   await chrome.windows.update(open.windowId, { focused: true });
 }
+
+// ---- notifications ----------------------------------------------------------
+// "notifications" is an optional permission: chrome.notifications exists only
+// once the user has turned notifications on in the settings.
+
+async function notifyFinished(task) {
+  if (!chrome.notifications || !(await getSettings()).notify) return;
+  const ok = task.status === 'completed';
+  let name = task.filename;
+  if (!name) {
+    try {
+      name = decodeURIComponent(new URL(task.url).pathname.split('/').pop()) || task.url;
+    } catch {
+      name = task.url || '';
+    }
+  }
+  const canOpen = ok && task.downloadId != null;
+  // The id carries what a click needs: the SW may have restarted since.
+  chrome.notifications.create(`task:${canOpen ? task.downloadId : ''}:${task.id}`, {
+    type: 'basic',
+    iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+    title: chrome.i18n.getMessage(ok ? 'notifyDone' : 'notifyFailed'),
+    message: name,
+    // The title already says it failed: just the reason.
+    contextMessage: ok ? chrome.i18n.getMessage(canOpen ? 'notifyClickOpen' : 'notifyClickManager') : statusText(task).replace(`${chrome.i18n.getMessage('statusError')}: `, ''),
+  });
+}
+
+async function onNotificationClicked(notificationId) {
+  const [, dl] = notificationId.split(':');
+  chrome.notifications.clear(notificationId);
+  if (!dl) return openManager();
+  const downloadId = Number(dl);
+  const [item] = await chrome.downloads.search({ id: downloadId });
+  if (!item?.exists) return openManager();
+  // Opening needs its own optional permission; without it, show the file.
+  if (await chrome.permissions.contains({ permissions: ['downloads.open'] })) {
+    try {
+      return await chrome.downloads.open(downloadId);
+    } catch {}
+  }
+  chrome.downloads.show(downloadId);
+}
+
+let notificationsHooked = false;
+function hookNotifications() {
+  if (notificationsHooked || !chrome.notifications) return;
+  notificationsHooked = true;
+  chrome.notifications.onClicked.addListener(onNotificationClicked);
+}
+hookNotifications();
+chrome.permissions.onAdded.addListener(hookNotifications);
 
 // Automatic takeover of browser downloads. The native download is paused
 // while the engine probes the URL; if the server supports ranges and the file
@@ -304,6 +366,7 @@ async function saveRecording(msg, tab) {
     size: msg.size,
     filename: sanitizeFilename(`${title}.${msg.ext}`),
     referrer: tab.url,
+    subfolders: subfoldersOf(await getSettings()),
   });
 }
 
@@ -359,6 +422,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
   if (msg?.type === 'engine-state') updateBadge(msg.tasks);
+  if (msg?.type === 'task-finished') notifyFinished(msg.task);
   return false;
 });
 

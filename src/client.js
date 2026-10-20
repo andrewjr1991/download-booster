@@ -1,14 +1,17 @@
 // Shared by the manager page and the toolbar popup: i18n, formatting and
 // talking to the download engine.
 
+import { resolveSubfolders, DIR_KEYS } from './subfolders.js';
+
 export const t = (key, subs) => chrome.i18n.getMessage(key, subs) || key;
-export const DEFAULT_SETTINGS = { autoTakeover: true, minSizeMB: 20, maxConnections: 6, maxActive: 3, speedLimitMB: 0 };
+export const DEFAULT_SETTINGS = { autoTakeover: true, minSizeMB: 20, maxConnections: 6, maxActive: 3, speedLimitMB: 0, notify: false };
 export const MB = 1024 * 1024;
 
 export function localize(root = document) {
   for (const el of root.querySelectorAll('[data-i18n]')) el.textContent = t(el.dataset.i18n);
   for (const el of root.querySelectorAll('[data-i18n-placeholder]')) el.placeholder = t(el.dataset.i18nPlaceholder);
   for (const el of root.querySelectorAll('[data-i18n-title]')) el.title = t(el.dataset.i18nTitle);
+  for (const el of root.querySelectorAll('[data-i18n-aria-label]')) el.setAttribute('aria-label', t(el.dataset.i18nAriaLabel));
   document.documentElement.lang = chrome.i18n.getUILanguage();
 }
 
@@ -21,6 +24,9 @@ export async function getSettings() {
   return { ...DEFAULT_SETTINGS, ...settings };
 }
 
+// File type -> subfolder for these settings, or null.
+export const subfoldersOf = (s) => resolveSubfolders(s.subfolders, (k) => t(DIR_KEYS[k]));
+
 // Add each URL as a task with the user's settings.
 export async function addUrls(urls, extra = {}) {
   const s = await getSettings();
@@ -31,6 +37,7 @@ export async function addUrls(urls, extra = {}) {
       maxConnections: s.maxConnections,
       maxActive: s.maxActive,
       speedLimit: s.speedLimitMB * MB,
+      subfolders: subfoldersOf(s),
       ...extra,
     });
   }

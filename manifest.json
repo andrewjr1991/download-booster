@@ -3,7 +3,7 @@
   "name": "__MSG_extName__",
   "short_name": "__MSG_extShortName__",
   "description": "__MSG_extDescription__",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "default_locale": "en",
   "minimum_chrome_version": "116",
   "icons": {
@@ -20,6 +20,14 @@
     },
     "default_popup": "src/popup.html"
   },
+  "commands": {
+    "open-manager": {
+      "suggested_key": {
+        "default": "Alt+Shift+D"
+      },
+      "description": "__MSG_commandOpenManager__"
+    }
+  },
   "background": {
     "service_worker": "src/background.js",
     "type": "module"
@@ -33,6 +41,10 @@
     "declarativeNetRequestWithHostAccess",
     "scripting",
     "webRequest"
+  ],
+  "optional_permissions": [
+    "notifications",
+    "downloads.open"
   ],
   "host_permissions": [
     "<all_urls>"

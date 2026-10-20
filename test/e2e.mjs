@@ -382,7 +382,7 @@ await check('manager sniff list downloads a page’s m3u8 as one joined video', 
 
 await check('batch: sniffing rules, copying links and a rename rule', async () => {
   // Rules typed into the manager's settings: show small images, ignore "photo".
-  await page.evaluate(() => (document.querySelector('#settings').open = true));
+  await page.click('#nav-settings');
   await page.fill('#rule-minImageKB', '1');
   await page.dispatchEvent('#rule-minImageKB', 'change');
   await page.fill('#rule-ignore', 'photo');
@@ -398,6 +398,7 @@ await check('batch: sniffing rules, copying links and a rename rule', async () =
   await page.fill('#rule-minImageKB', '10');
   await page.fill('#rule-ignore', '');
   await page.dispatchEvent('#rule-ignore', 'change');
+  await page.click('#task-groups button[data-value="all"]');
 
   // Rename and copy in the page link list.
   const before = (await engine('list')).tasks.map((t) => t.id);
@@ -883,6 +884,85 @@ await check('download folder: a joined m3u8 is saved into the folder too', async
   return `saved ${done.savedTo}, identical to the expected join`;
 });
 
+// Every file under the picked folder, subfolders included: path -> SHA-256.
+const pickedTree = () =>
+  page.evaluate(async () => {
+    const out = {};
+    async function walk(dir, prefix) {
+      for await (const [n, h] of dir.entries()) {
+        if (h.kind === 'directory') await walk(h, `${prefix}${n}/`);
+        else {
+          const buf = await (await h.getFile()).arrayBuffer();
+          out[prefix + n] = [...new Uint8Array(await crypto.subtle.digest('SHA-256', buf))].map((b) => b.toString(16).padStart(2, '0')).join('');
+        }
+      }
+    }
+    await walk(await (await navigator.storage.getDirectory()).getDirectoryHandle('picked', { create: true }), '');
+    return out;
+  });
+
+async function addFromForm(url) {
+  const before = (await engine('list')).tasks.map((t) => t.id);
+  await page.fill('#url', url);
+  await page.press('#url', 'Enter');
+  for (let i = 0; i < 40; i++) {
+    await sleep(250);
+    const added = (await engine('list')).tasks.filter((t) => !before.includes(t.id));
+    if (added.length) return added;
+  }
+  throw new Error('nothing added');
+}
+
+await check('subfolders by type: into the browser download folder and into the picked folder', async () => {
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6, subfolders: { on: true, names: { disk: 'Images/ISO' } } });
+  // Playwright keeps downloads under made-up names: note the name asked for.
+  await sw.evaluate(() => {
+    self.savedNames = [];
+    const download = chrome.downloads.download.bind(chrome.downloads);
+    chrome.downloads.download = (opts) => (self.savedNames.push(opts.filename), download(opts));
+  });
+  const [a] = await addFromForm(`${srv.url}/file.bin?sub=1`);
+  const doneA = await waitTask(a.id, (t) => t.status === 'completed');
+  const { hash } = await savedFileHash(doneA.downloadId);
+  const [asked] = await sw.evaluate(() => self.savedNames);
+  if (hash !== srv.sha256 || asked !== 'Images/ISO/test-40MB.bin') throw new Error(`saved as ${asked}`);
+  await pickFolder(true);
+  const [b] = await addFromForm(`${srv.url}/file.bin?sub=2`);
+  const doneB = await waitTask(b.id, (t) => t.status === 'completed');
+  const { id: c } = await engine('add', { url: `${srv.url}/hlsav/master.m3u8`, kind: 'hls', filename: 'AV sub', maxConnections: 4, subfolders: { video: 'Videos' } });
+  const doneC = await waitTask(c, (t) => t.status === 'completed', 60000);
+  const tree = await pickedTree();
+  await pickFolder(false);
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6 });
+  if (tree['Images/ISO/test-40MB.bin'] !== srv.sha256 || doneB.savedTo !== 'picked/Images/ISO/test-40MB.bin') throw new Error(`folder: ${doneB.savedTo} ${JSON.stringify(Object.keys(tree))}`);
+  if (tree['Videos/AV sub.mp4'] !== srv.mseSha256 || doneC.savedTo !== 'picked/Videos/AV sub.mp4') throw new Error(`m3u8: ${doneC.savedTo} ${JSON.stringify(Object.keys(tree))}`);
+  if (Object.keys(tree).length !== 2) throw new Error(`left over: ${Object.keys(tree)}`);
+  return `Downloads/${asked}; ${doneB.savedTo}; ${doneC.savedTo}`;
+});
+
+await check('a link pattern [1-3] adds three downloads, previewed while typing', async () => {
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 1, speedLimitMB: 0 });
+  await page.fill('#url', `${srv.url}/file.bin?n=[01-03]`);
+  await page.dispatchEvent('#url', 'input');
+  const preview = await page.textContent('#add-msg');
+  if (!preview.includes('3') || !preview.includes('n=01') || !preview.includes('n=03')) throw new Error(`preview "${preview}"`);
+  const added = await addFromForm(`${srv.url}/file.bin?n=[01-03]`);
+  await sleep(500);
+  const all = (await engine('list')).tasks.filter((t) => /n=0\d$/.test(t.url));
+  for (const t of all) await engine('remove', { id: t.id });
+  const urls = all.map((t) => t.url.split('?')[1]).sort();
+  if (JSON.stringify(urls) !== '["n=01","n=02","n=03"]') throw new Error(`added ${urls} (${added.length} seen first)`);
+  return `"${preview}"`;
+});
+
+await check('keyboard shortcut Alt+Shift+D is registered and shown in the settings', async () => {
+  const cmds = await page.evaluate(() => chrome.commands.getAll());
+  const cmd = cmds.find((c) => c.name === 'open-manager');
+  const shown = await page.textContent('#shortcut-now');
+  if (!cmd || !/Alt\+Shift\+D/.test(cmd.shortcut) || !shown.includes(cmd.shortcut)) throw new Error(`${JSON.stringify(cmds)} / "${shown}"`);
+  return `"${shown}"`;
+});
+
 await check('checksum: a matching SHA-256 is verified after the download', async () => {
   await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6 });
   await engine('set-limit', { maxActive: 3, speedLimit: 0 });
@@ -996,6 +1076,99 @@ await check('saving: if writing keeps failing, the reason is shown and retrying 
   } finally {
     fix();
   }
+});
+
+await check('task list: filter by state and type, search by name', async () => {
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 6 });
+  for (const t of (await engine('list')).tasks) await engine('remove', { id: t.id });
+  const done = await download(`${srv.url}/file.bin?list=done`, { maxConnections: 6 });
+  const { id: pausedId } = await engine('add', { url: `${srv.url}/file.bin?list=paused`, maxConnections: 1 });
+  await waitTask(pausedId, (t) => t.downloaded > 0);
+  await engine('pause', { id: pausedId });
+  await waitTask(pausedId, (t) => t.status === 'paused');
+  const cards = () => page.$$eval('#tasks .task .name', (els) => els.map((e) => e.title));
+  const chips = await page.$$eval('#task-groups button', (els) => els.map((e) => e.textContent));
+  if (chips.length !== 4 || !chips[0].endsWith('2')) throw new Error(`sidebar: ${chips}`);
+  await page.click('#task-groups button[data-value="completed"]');
+  let shown = await cards();
+  if (shown.length !== 1 || !shown[0].includes('list=done')) throw new Error(`completed shows ${shown}`);
+  await page.click('#task-groups button[data-value="active"]');
+  shown = await cards();
+  if (shown.length !== 1 || !shown[0].includes('list=paused')) throw new Error(`in progress shows ${shown}`);
+  await page.click('#task-groups button[data-value="all"]');
+  await page.fill('#task-search', 'no such file');
+  await page.waitForSelector('#no-match:not([hidden])');
+  await page.fill('#task-search', 'LIST=PAUSED');
+  shown = await cards();
+  if (shown.length !== 1 || !shown[0].includes('list=paused')) throw new Error(`search shows ${shown}`);
+  await page.fill('#task-search', '');
+  await page.dispatchEvent('#task-search', 'input');
+  shown = await cards();
+  if (shown.length !== 2) throw new Error(`cleared search shows ${shown}`);
+  await engine('remove', { id: pausedId });
+  return `sidebar "${chips.join(' / ')}"; ${done.done.filename} kept`;
+});
+
+await check('list: sort by a column, right-click menu, pick several and remove them', async () => {
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 1 });
+  for (const t of (await engine('list')).tasks) await engine('remove', { id: t.id });
+  const ids = [];
+  for (const q of ['b', 'a', 'c']) ids.push((await engine('add', { url: `${srv.url}/file.bin?pick=${q}`, maxConnections: 1, filename: `${q}.bin` })).id);
+  for (const id of ids) await engine('pause', { id });
+  await page.waitForFunction(() => document.querySelectorAll('#tasks .task').length === 3);
+  const names = () => page.$$eval('#tasks .task .name', (els) => els.map((e) => e.title.split('=').pop()));
+  await page.click('#thead [data-sort="name"]');
+  const asc = (await names()).join('');
+  await page.click('#thead [data-sort="name"]');
+  const desc = (await names()).join('');
+  if (asc !== 'abc' || desc !== 'cba') throw new Error(`sorted ${asc} / ${desc}`);
+  await page.click('#thead [data-sort="date"]');
+  // Right-click: the row's actions with their names.
+  await page.locator('#tasks .task').first().click({ button: 'right', position: { x: 200, y: 20 } });
+  const menu = await page.$$eval('#menu button', (els) => els.map((e) => e.textContent));
+  if (!menu.includes('Resume') || !menu.includes('Copy link')) throw new Error(`menu ${menu}`);
+  await page.keyboard.press('Escape');
+  // Pick two and remove them; they are unfinished, so it asks first.
+  const rows = page.locator('#tasks .task .pick');
+  await rows.nth(0).check();
+  await rows.nth(1).check();
+  const count = await page.textContent('#bulk-count');
+  page.once('dialog', (d) => d.accept());
+  await page.click('#bulk [data-bulk="remove"]');
+  await page.waitForFunction(() => document.querySelectorAll('#tasks .task').length === 1);
+  const left = (await engine('list')).tasks.length;
+  if (left !== 1 || !(await page.isHidden('#bulk'))) throw new Error(`${left} left`);
+  for (const t of (await engine('list')).tasks) await engine('remove', { id: t.id });
+  return `name ${asc}/${desc}, menu "${menu.join(', ')}", "${count}" removed`;
+});
+
+await check('completed download: copy its link, download it again', async () => {
+  const { done: task } = await download(`${srv.url}/file.bin?again`, { maxConnections: 6 });
+  const card = page.locator('#tasks .task', { has: page.locator(`.name[title="${task.url}"]`) });
+  await card.locator('button[data-action="redownload"]').waitFor();
+  const labels = await card.locator('.actions button').evaluateAll((els) => els.map((e) => e.dataset.action));
+  for (const a of ['open', 'show', 'copy', 'redownload', 'remove']) if (!labels.includes(a)) throw new Error(`actions ${labels}`);
+  // Tests can't read the clipboard here: note what the page writes to it.
+  await page.evaluate(() => {
+    window.copiedText = null;
+    const write = navigator.clipboard.writeText.bind(navigator.clipboard);
+    navigator.clipboard.writeText = (text) => ((window.copiedText = text), write(text).catch(() => {}));
+  });
+  await card.locator('button[data-action="copy"]').click();
+  const copied = await page.evaluate(() => window.copiedText);
+  if (copied !== task.url) throw new Error(`copied ${copied}`);
+  const before = (await engine('list')).tasks.map((t) => t.id);
+  await card.locator('button[data-action="redownload"]').click();
+  let again;
+  for (let i = 0; i < 20 && !again; i++) {
+    await sleep(250);
+    again = (await engine('list')).tasks.find((t) => !before.includes(t.id));
+  }
+  if (!again || again.url !== task.url) throw new Error(`download again added ${JSON.stringify(again)}`);
+  const done = await waitTask(again.id, (t) => t.status === 'completed');
+  const { hash, item } = await savedFileHash(done.downloadId);
+  if (hash !== srv.sha256) throw new Error('hash mismatch');
+  return `copied the link; saved again as ${path.basename(item.filename)}`;
 });
 
 await check('small files are left to the browser', async () => {

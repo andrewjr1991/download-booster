@@ -15,17 +15,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const CAPTIONS = {
   zh_CN: {
-    manager: ['多连接分段下载，用满你的带宽', '自动选择连接数，慢连接自动换掉，支持暂停和断点续传'],
+    manager: ['清爽的下载管理，多连接加速', '分类、搜索、批量操作；自动选择连接数，支持暂停和断点续传'],
     sniff: ['网页里的视频、音频一键下载', '自动发现页面加载的视频、音频、图片和 m3u8/DASH 播放列表'],
     stream: ['m3u8 / DASH 视频合并成一个文件', '选择清晰度，加密分片自动解密，下完自动合并'],
-    settings: ['限速、文件夹、校验，都能自己设', '直接写进你选的文件夹，下完自动核对 MD5 / SHA-256'],
+    settings: ['限速、文件夹、分类保存，都能自己设', '按文件类型存进子文件夹，下完弹出通知、自动核对校验值'],
     tile: ['下载加速器', '多连接分段下载'],
   },
   en: {
-    manager: ['Multi-connection downloads that fill your bandwidth', 'Picks the connection count by itself, replaces slow connections, pauses and resumes'],
+    manager: ['A clean download manager with multi-connection speed', 'Filter, search and act on many at once; pause and resume; fills your bandwidth'],
     sniff: ['Download the videos and audio on any page', 'Finds the videos, audio, images and m3u8/DASH playlists a page loads'],
     stream: ['m3u8 and DASH videos saved as one file', 'Pick a quality; encrypted pieces are decrypted and joined for you'],
-    settings: ['Speed limit, save folder, checksums', 'Write straight into a folder you pick; MD5 / SHA-256 checked when done'],
+    settings: ['Speed limit, save folder, sorting by type', 'Subfolders by file type, a notification when done, checksums verified'],
     tile: ['Download Booster', 'Multi-connection downloads'],
   },
 };
@@ -147,7 +147,7 @@ const server = await startServer(8790);
 const base = 'http://media.example.com';
 const icon = fs.readFileSync(path.join(EXT, 'docs', 'store', 'icon-512.png')); // tools/make-icon128.py
 // Pages are captured at 2× and framed at 1×, so the text stays sharp.
-const framer = await chromium.launch({ channel: 'chromium' });
+const framer = await chromium.launch({ channel: 'chromium', executablePath: process.env.CHROMIUM || undefined });
 const fctx = await framer.newContext({ deviceScaleFactor: 1 });
 
 for (const locale of LOCALES) {
@@ -157,6 +157,7 @@ for (const locale of LOCALES) {
   const ctx = await chromium.launchPersistentContext(userDir, {
     headless: true,
     channel: 'chromium',
+    executablePath: process.env.CHROMIUM || undefined,
     locale: locale.replace('_', '-'),
     deviceScaleFactor: 2,
     env: { ...process.env, LANGUAGE: locale },
@@ -196,15 +197,13 @@ for (const locale of LOCALES) {
 
     // 4. Settings, opened.
     for (const id of running) await engine('pause', { id });
+    await page.click('#nav-settings');
+    // Show the subfolders by type (not saved), from the save location down.
     await page.evaluate(() => {
-      document.querySelector('#settings').open = true;
-      document.querySelector('#add-more').open = false;
-    });
-    // Scroll the settings up to just under the sticky header.
-    await page.evaluate(() => {
-      const top = document.querySelector('#settings').getBoundingClientRect().top + scrollY;
-      const header = document.querySelector('header')?.getBoundingClientRect().height || 0;
-      scrollTo(0, top - header - 16);
+      document.querySelector('#subdirs-on').checked = true;
+      document.querySelector('#subdir-rows').hidden = false;
+      const group = document.querySelectorAll('.settings-group')[1];
+      document.querySelector('.content').scrollTop = group.offsetTop - 16;
     });
     await sleep(500);
     const settings = await page.screenshot();

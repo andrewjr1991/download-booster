@@ -1,9 +1,11 @@
-import { CATEGORY_ORDER, categorize, parsePastedUrls } from './sniff.js';
+import { CATEGORY_ORDER, parsePastedUrls, PATTERN_MAX } from './sniff.js';
+import { DIR_KEYS } from './subfolders.js';
 import { ICONS } from './icons.js';
 import { DEFAULT_RULES } from './media.js';
 import { pickFilename, applyRename } from './http.js';
 import { getFolder, setFolder, folderPermission } from './folder.js';
 import { parseChecksum, ALGO_NAMES } from './hash.js';
+import { TASK_GROUPS, taskGroup, taskKind, matchTask } from './tasks-filter.js';
 import {
   t,
   DEFAULT_SETTINGS,
@@ -11,6 +13,8 @@ import {
   localize,
   engine,
   addUrls as addTasks,
+  getSettings,
+  subfoldersOf,
   bytes,
   speed,
   duration,
@@ -26,15 +30,30 @@ const DEBUG = new URLSearchParams(location.search).has('debug');
 
 // ---- rendering ----------------------------------------------------------------
 
-function render(tasks, speedLimit = 0) {
-  renderTotal(tasks, speedLimit);
+let lastTasks = [];
+let lastLimit = 0;
+// What the list shows: a state or a file type from the sidebar, a search,
+// and the order. `page` is the list or the settings.
+const view = { group: 'all', kind: null, q: '', sort: 'date', dir: 'desc', page: 'list' };
+const picked = new Set(); // ids of ticked rows
+
+const GROUP_KEYS = { all: 'navAll', active: 'navActive', completed: 'navCompleted', error: 'navFailed' };
+const GROUP_ICONS = { all: 'list', active: 'download', completed: 'check', error: 'alert' };
+
+function render(tasks = lastTasks, speedLimit = lastLimit) {
+  lastTasks = tasks;
+  lastLimit = speedLimit;
+  for (const id of picked) if (!tasks.some((x) => x.id === id)) picked.delete(id);
+  renderNav(tasks);
+  renderStatus(tasks, speedLimit);
+  const shown = sortTasks(tasks.filter((task) => matchTask(task, view)));
   const seen = new Set();
   const list = $('#tasks');
-  tasks.forEach((task, i) => {
+  shown.forEach((task, i) => {
     seen.add(task.id);
     let card = cards.get(task.id);
     if (!card) {
-      card = $('#task-tpl').content.firstElementChild.cloneNode(true);
+      card = makeCard();
       cards.set(task.id, card);
     }
     if (list.children[i] !== card) list.insertBefore(card, list.children[i] || null);
@@ -47,50 +66,197 @@ function render(tasks, speedLimit = 0) {
     }
   }
   $('#empty').hidden = tasks.length > 0;
+  $('#no-match').hidden = !tasks.length || shown.length > 0;
+  renderBulk(shown);
 }
 
-// Combined speed of all running tasks, and the limit when one is set.
-function renderTotal(tasks, speedLimit) {
+function sortTasks(tasks) {
+  const key = {
+    name: (x) => (x.filename || x.url || '').toLowerCase(),
+    size: (x) => x.size || x.downloaded || 0,
+    date: (x) => x.createdAt || 0,
+  }[view.sort];
+  const sign = view.dir === 'asc' ? 1 : -1;
+  return tasks.sort((a, b) => {
+    const [ka, kb] = [key(a), key(b)];
+    return sign * (typeof ka === 'string' ? ka.localeCompare(kb) : ka - kb);
+  });
+}
+
+// The sidebar: states with counts, then the file types present.
+function renderNav(tasks) {
+  const counts = { all: tasks.length, active: 0, completed: 0, error: 0 };
+  const kinds = {};
+  for (const task of tasks) {
+    counts[taskGroup(task)]++;
+    const k = taskKind(task);
+    kinds[k] = (kinds[k] || 0) + 1;
+  }
+  // Nothing left of the picked type: show everything again.
+  if (view.kind && !kinds[view.kind]) view.kind = null;
+  const onList = view.page === 'list';
+  navRow(
+    $('#task-groups'),
+    TASK_GROUPS.map((g) => [g, GROUP_ICONS[g], t(GROUP_KEYS[g]), counts[g], onList && !view.kind && view.group === g]),
+    (g) => setView({ group: g, kind: null }),
+  );
+  const present = CATEGORY_ORDER.filter((c) => kinds[c]);
+  navRow(
+    $('#task-kinds'),
+    present.map((k) => [k, k, t(CATEGORY_KEYS[k]), kinds[k], onList && view.kind === k]),
+    (k) => setView({ group: 'all', kind: k }),
+  );
+  $('#kinds-title').hidden = !present.length;
+  $('#nav-settings').setAttribute('aria-pressed', String(!onList));
+  $('#view-title').textContent = !onList ? t('settings') : view.kind ? t(CATEGORY_KEYS[view.kind]) : t(GROUP_KEYS[view.group]);
+}
+
+// Rebuilt only when a label, count or the pressed entry changes, so a click
+// is not lost to a re-render in between.
+function navRow(box, items, pick) {
+  const key = JSON.stringify(items);
+  if (box.dataset.key === key) return;
+  box.dataset.key = key;
+  box.replaceChildren(
+    ...items.map(([value, ic, label, count, pressed]) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.value = value;
+      b.setAttribute('aria-pressed', String(pressed));
+      b.innerHTML = ICONS[ic] || ICONS.other;
+      const l = document.createElement('span');
+      l.className = 'label';
+      l.textContent = label;
+      const c = document.createElement('span');
+      c.className = 'count';
+      c.textContent = count;
+      b.append(l, c);
+      b.onclick = () => pick(value);
+      return b;
+    }),
+  );
+}
+
+function setView(changes) {
+  Object.assign(view, changes, { page: 'list' });
+  showPage();
+  render();
+}
+
+function showPage() {
+  const list = view.page === 'list';
+  $('#list-view').hidden = !list;
+  $('#settings').hidden = list;
+  $('#list-tools').hidden = !list;
+  $('.search').hidden = !list;
+  $('.content').scrollTop = 0;
+}
+
+// Combined speed of all running tasks, the limit when one is set, and counts.
+function renderStatus(tasks, speedLimit) {
   const running = tasks.filter((x) => x.status === 'downloading');
   const parts = [];
   if (running.length) parts.push(t('totalSpeed', [speed(running.reduce((sum, x) => sum + (x.speed || 0), 0))]));
   if (speedLimit > 0) parts.push(t('limitedTo', [speed(speedLimit)]));
   $('#total').textContent = parts.join(' · ');
+  const active = tasks.filter((x) => taskGroup(x) === 'active').length;
+  const done = tasks.filter((x) => x.status === 'completed').length;
+  $('#counts').textContent = tasks.length ? t('statusCounts', [String(active), String(done), String(tasks.length)]) : '';
+}
+
+function makeCard() {
+  const card = $('#task-tpl').content.firstElementChild.cloneNode(true);
+  card.querySelector('.pick').onchange = (e) => {
+    if (e.target.checked) picked.add(card.dataset.id);
+    else picked.delete(card.dataset.id);
+    render();
+  };
+  card.ondblclick = (e) => {
+    if (e.target.closest('button, input')) return;
+    const task = lastTasks.find((x) => x.id === card.dataset.id);
+    if (task?.status === 'completed' && task.downloadId != null && !task.savedTo) openFile(task);
+  };
+  card.oncontextmenu = (e) => {
+    const task = lastTasks.find((x) => x.id === card.dataset.id);
+    if (!task) return;
+    e.preventDefault();
+    openMenu(e.clientX, e.clientY, task);
+  };
+  return card;
 }
 
 function updateCard(card, task) {
+  card.dataset.id = task.id;
+  card.classList.toggle('picked', picked.has(task.id));
+  card.querySelector('.pick').checked = picked.has(task.id);
   const name = task.filename || task.url;
   card.querySelector('.name').textContent = name;
   card.querySelector('.name').title = task.url;
-  const kind = categorize(`https://x/${encodeURIComponent(name)}`);
+  const kind = taskKind(task);
   const ftype = card.querySelector('.ftype');
   if (ftype.dataset.kind !== kind) {
     ftype.dataset.kind = kind;
     ftype.innerHTML = ICONS[kind] || ICONS.other;
   }
 
+  const done = task.status === 'completed' ? task.size : task.downloaded;
+  card.querySelector('.size').textContent = task.size ? bytes(task.size) : done ? bytes(done) : '—';
+
   const status = card.querySelector('.status');
   status.dataset.s = task.status;
-  status.textContent = statusText(task);
-  status.title = task.error?.message || '';
-
+  const pct = task.status === 'downloading' && !task.verifying ? percent(task) : null;
+  status.textContent = pct == null ? statusText(task) : `${statusText(task)} ${pct}%`;
+  status.title = task.error?.message || statusText(task);
   drawBar(card.querySelector('.bar'), task);
 
-  const parts = [];
-  const done = task.status === 'completed' ? task.size : task.downloaded;
-  parts.push(task.size ? `${bytes(done)} / ${bytes(task.size)}` : bytes(done));
-  // m3u8: how many of its pieces are in, and roughly how long is left.
-  const hls = task.hls?.total && task.status !== 'completed' ? task.hls : null;
-  if (hls) parts.push(t('pieces', [`${hls.done}/${hls.total}`]));
+  // Speed, and below it the time left.
+  const sp = card.querySelector('.speed');
   if (task.status === 'downloading') {
-    parts.push(speed(task.speed));
-    parts.push(task.connections === 1 ? t('oneConnection') : t('connections', [String(task.connections)]));
-    if (task.size && task.speed > 0) parts.push(t('timeLeft', [duration((task.size - task.downloaded) / task.speed)]));
-    else if (hls?.done && task.speed > 0) {
-      const estimate = (task.downloaded / hls.done) * hls.total;
-      parts.push(t('timeLeft', [duration((estimate - task.downloaded) / task.speed)]));
-    }
-  }
+    const left = timeLeft(task);
+    const small = document.createElement('small');
+    small.textContent = left ? t('timeLeft', [left]) : '';
+    sp.replaceChildren(speed(task.speed), small);
+  } else sp.textContent = task.status === 'completed' ? '' : '—';
+
+  card.querySelector('.date').textContent = when(task.createdAt);
+  card.querySelector('.date').title = task.createdAt ? new Date(task.createdAt).toLocaleString() : '';
+  card.querySelector('.meta').textContent = metaLine(task);
+  card.querySelector('.compare').textContent = compareLine(task);
+  renderActions(card.querySelector('.actions'), task);
+}
+
+function percent(task) {
+  if (task.size) return Math.min(99, Math.floor((task.downloaded / task.size) * 100));
+  if (task.hls?.total) return Math.min(99, Math.floor((task.hls.done / task.hls.total) * 100));
+  return null;
+}
+
+function timeLeft(task) {
+  if (!(task.speed > 0)) return '';
+  if (task.size) return duration((task.size - task.downloaded) / task.speed);
+  // m3u8: estimated from the pieces done so far.
+  if (task.hls?.done) return duration(((task.downloaded / task.hls.done) * task.hls.total - task.downloaded) / task.speed);
+  return '';
+}
+
+// "14:05" today, otherwise the date.
+function when(ms) {
+  if (!ms) return '';
+  const d = new Date(ms);
+  const today = new Date().toDateString() === d.toDateString();
+  return today ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString([], { month: '2-digit', day: '2-digit' });
+}
+
+// Where it is from, and what is going on with it.
+function metaLine(task) {
+  const parts = [];
+  try {
+    parts.push(new URL(task.url).host);
+  } catch {}
+  if (task.status === 'downloading' || task.status === 'paused') parts.push(task.size ? `${bytes(task.downloaded)} / ${bytes(task.size)}` : bytes(task.downloaded));
+  // m3u8: how many of its pieces are in.
+  if (task.hls?.total && task.status !== 'completed') parts.push(t('pieces', [`${task.hls.done}/${task.hls.total}`]));
+  if (task.status === 'downloading') parts.push(task.connections === 1 ? t('oneConnection') : t('connections', [String(task.connections)]));
   if (task.status === 'completed' && task.savedTo) parts.push(t('savedTo', [task.savedTo]));
   if (task.verified?.ok) parts.push(t('checksumOk', [ALGO_NAMES[task.verified.algo]]));
   else if (task.checksum && task.status !== 'completed' && task.status !== 'error') parts.push(t('checksumPending', [ALGO_NAMES[task.checksum]]));
@@ -98,10 +264,7 @@ function updateCard(card, task) {
   if (task.mirrors && task.status !== 'error') {
     parts.push(task.mirrors.map((m) => (m.bad ? t('mirrorUnusable', [m.host]) : `${m.host} ${bytes(m.bytes)}`)).join(', '));
   }
-  card.querySelector('.meta').textContent = parts.join(' · ');
-
-  card.querySelector('.compare').textContent = compareLine(task);
-  renderActions(card.querySelector('.actions'), task);
+  return parts.join(' · ');
 }
 
 // The average speed of a finished download (and debug details while running).
@@ -125,40 +288,247 @@ function levelsLine(task) {
   return parts.join(' · ');
 }
 
+// What can be done with a task: [label key, action, icon], the main one first.
+function actionsFor(task) {
+  const out = [];
+  const s = task.status;
+  if (s === 'downloading' || s === 'queued') out.push(['pause', 'pause', 'pause']);
+  if (s === 'paused') out.push(['resume', 'resume', 'play']);
+  if (s === 'error') out.push(['retry', 'resume', 'retry']);
+  // Files saved into the picked folder are not in the browser's download
+  // list, so the browser cannot open or show them.
+  const inBrowser = s === 'completed' && !task.savedTo && task.downloadId != null;
+  if (inBrowser) out.push(['openFile', 'open', 'open'], ['showInFolder', 'show', 'folder']);
+  // A recording's address is the page, not a file.
+  if (task.kind !== 'record' && /^https?:/i.test(task.url || '')) out.push(['copyLink', 'copy', 'link']);
+  if (s === 'completed' && task.kind !== 'record') out.push(['redownload', 'redownload', 'retry']);
+  if (s === 'completed' || s === 'error') out.push(['remove', 'remove', 'trash']);
+  else out.push(['cancel', 'cancel', 'close']);
+  return out;
+}
+
+// Icon buttons; the first one always shows, the rest when pointed at.
 function renderActions(box, task) {
-  const wanted = [];
-  if (task.status === 'downloading' || task.status === 'queued') wanted.push(['pause', 'pause', 'pause'], ['cancel', 'cancel', 'close']);
-  if (task.status === 'paused') wanted.push(['resume', 'resume', 'play'], ['cancel', 'cancel', 'close']);
-  if (task.status === 'error') wanted.push(['retry', 'resume', 'retry'], ['remove', 'remove', 'trash']);
-  // Files saved into the picked folder are not in the browser's download list.
-  if (task.status === 'completed') wanted.push(...(task.savedTo ? [] : [['showInFolder', 'show', 'folder']]), ['remove', 'remove', 'trash']);
-  const key = wanted.map((w) => w[0]).join();
+  const wanted = actionsFor(task);
+  const key = wanted.map((w) => w[1]).join();
   if (box.dataset.key === key) return;
   box.dataset.key = key;
+  // The main one last, so it stays in the same place on every row.
   box.replaceChildren(
-    ...wanted.map(([label, action, ic]) => {
+    ...wanted.map(([label, action, ic], i) => [label, action, ic, i]).slice(1).concat([[...wanted[0], 0]]).map(([label, action, ic, i]) => {
       const b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.action = action;
+      b.className = i === 0 ? 'main-action' : 'more';
       b.innerHTML = ICONS[ic];
-      b.append(t(label));
-      b.onclick = () => act(action, task);
+      b.title = t(label);
+      b.setAttribute('aria-label', t(label));
+      b.onclick = () => act(action, lastTasks.find((x) => x.id === task.id) || task);
       return b;
     }),
   );
 }
+
+// ---- right-click menu -------------------------------------------------------------
+
+function openMenu(x, y, task) {
+  const menu = $('#menu');
+  const many = picked.has(task.id) && picked.size > 1;
+  const items = many
+    ? BULK.filter(([action]) => action !== 'none').map(([action, label, ic]) => [t(label), ic, () => bulk(action)])
+    : actionsFor(task).map(([label, action, ic]) => [t(label), ic, () => act(action, task)]);
+  if (!many) items.push(null, [t(picked.has(task.id) ? 'unpick' : 'pick'), 'check', () => togglePick(task.id)]);
+  menu.replaceChildren(
+    ...items.map((it) => {
+      if (!it) return document.createElement('hr');
+      const [label, ic, run] = it;
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.setAttribute('role', 'menuitem');
+      b.innerHTML = ICONS[ic] || '';
+      b.append(label);
+      b.onclick = () => {
+        closeMenu();
+        run();
+      };
+      return b;
+    }),
+  );
+  menu.hidden = false;
+  const r = menu.getBoundingClientRect();
+  menu.style.left = `${Math.min(x, innerWidth - r.width - 8)}px`;
+  menu.style.top = `${Math.min(y, innerHeight - r.height - 8)}px`;
+  menu.querySelector('button')?.focus();
+}
+function closeMenu() {
+  $('#menu').hidden = true;
+}
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#menu')) closeMenu();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeMenu();
+});
+window.addEventListener('blur', closeMenu);
+$('.content').addEventListener('scroll', closeMenu);
+
+function togglePick(id) {
+  if (picked.has(id)) picked.delete(id);
+  else picked.add(id);
+  render();
+}
+
+// ---- several at once ------------------------------------------------------------
+
+// [action, label key, icon]
+const BULK = [
+  ['pause', 'bulkPause', 'pause'],
+  ['resume', 'bulkResume', 'play'],
+  ['copy', 'bulkCopy', 'link'],
+  ['remove', 'bulkRemove', 'trash'],
+  ['none', 'bulkNone', 'close'],
+];
+
+function renderBulk(shown) {
+  $('#bulk').hidden = !picked.size;
+  $('#bulk-count').textContent = t('pickedCount', [String(picked.size)]);
+  const all = $('#select-all');
+  const n = shown.filter((x) => picked.has(x.id)).length;
+  all.checked = shown.length > 0 && n === shown.length;
+  all.indeterminate = n > 0 && n < shown.length;
+}
+for (const b of document.querySelectorAll('#bulk [data-bulk]')) {
+  const [, label, ic] = BULK.find((x) => x[0] === b.dataset.bulk);
+  b.innerHTML = ICONS[ic];
+  b.append(t(label));
+  b.onclick = () => bulk(b.dataset.bulk);
+}
+$('#select-all').addEventListener('change', (e) => {
+  const shown = lastTasks.filter((task) => matchTask(task, view));
+  for (const x of shown) {
+    if (e.target.checked) picked.add(x.id);
+    else picked.delete(x.id);
+  }
+  render();
+});
+
+async function bulk(action, tasks = lastTasks.filter((x) => picked.has(x.id))) {
+  if (action === 'none') {
+    picked.clear();
+    return render();
+  }
+  if (action === 'copy') {
+    const urls = tasks.filter((x) => x.kind !== 'record' && /^https?:/i.test(x.url)).map((x) => x.url);
+    await navigator.clipboard.writeText(urls.join('\n'));
+    return note(t('copiedCount', [String(urls.length)]));
+  }
+  if (action === 'remove') {
+    // Unfinished downloads lose what they have: check first.
+    const unfinished = tasks.filter((x) => x.status !== 'completed').length;
+    if (unfinished && !confirm(t('confirmRemove', [String(unfinished)]))) return;
+    for (const x of tasks) await engine('remove', { id: x.id });
+    picked.clear();
+    return refresh();
+  }
+  for (const x of tasks) {
+    if (action === 'pause' && (x.status === 'downloading' || x.status === 'queued')) await engine('pause', { id: x.id });
+    if (action === 'resume' && (x.status === 'paused' || x.status === 'error')) await engine('resume', { id: x.id });
+  }
+  refresh();
+}
+
+$('#pause-all').innerHTML = ICONS.pause;
+$('#pause-all').addEventListener('click', () => bulk('pause', lastTasks));
+$('#resume-all').innerHTML = ICONS.play;
+$('#resume-all').addEventListener('click', () => bulk('resume', lastTasks));
+
+// Column headers sort; a second click turns the order around.
+for (const b of document.querySelectorAll('#thead [data-sort]')) {
+  b.addEventListener('click', () => {
+    const k = b.dataset.sort;
+    view.dir = view.sort === k ? (view.dir === 'asc' ? 'desc' : 'asc') : k === 'name' ? 'asc' : 'desc';
+    view.sort = k;
+    showSort();
+    render();
+  });
+}
+function showSort() {
+  for (const b of document.querySelectorAll('#thead [data-sort]')) {
+    if (b.dataset.sort === view.sort) b.dataset.dir = view.dir;
+    else delete b.dataset.dir;
+  }
+}
+showSort();
+
+$('#task-search').addEventListener('input', (e) => {
+  view.q = e.target.value;
+  render();
+});
+
+$('#new-download').innerHTML = ICONS.plus;
+$('#new-download').append(t('newDownload'));
+$('#new-download').addEventListener('click', () => {
+  setView({});
+  $('#url').focus();
+});
+$('#nav-settings').innerHTML = ICONS.gear;
+$('#nav-settings').append(Object.assign(document.createElement('span'), { className: 'label', textContent: t('settings') }));
+$('#nav-settings').addEventListener('click', () => {
+  view.page = 'settings';
+  showPage();
+  render();
+});
 
 async function act(action, task) {
   if (action === 'show') {
     if (task.downloadId != null) chrome.downloads.show(task.downloadId);
     return;
   }
+  if (action === 'open') return openFile(task);
+  if (action === 'copy') {
+    await navigator.clipboard.writeText(task.url);
+    return note(t('copied'));
+  }
+  if (action === 'redownload') {
+    const s = await getSettings();
+    await engine('redownload', {
+      id: task.id,
+      maxConnections: s.maxConnections,
+      maxActive: s.maxActive,
+      speedLimit: s.speedLimitMB * MB,
+      subfolders: subfoldersOf(s),
+    });
+    view.group = 'all';
+    view.kind = null;
+    return refresh();
+  }
   await engine(action, { id: task.id });
   refresh();
 }
 
+// Opening a file needs the optional "downloads.open" permission, asked for
+// on the first click. Chrome only opens a file in answer to a click; if the
+// permission prompt took too long for that, the user clicks again.
+async function openFile(task) {
+  const had = await chrome.permissions.contains({ permissions: ['downloads.open'] });
+  if (!had && !(await chrome.permissions.request({ permissions: ['downloads.open'] }).catch(() => false))) return;
+  const [item] = await chrome.downloads.search({ id: task.downloadId });
+  try {
+    if (!item || item.exists === false) throw new Error('gone');
+    await chrome.downloads.open(task.downloadId);
+    note('');
+  } catch (err) {
+    if (!had && /gesture/i.test(String(err?.message))) return note(t('openFileAllowed'));
+    // Moved or deleted since: show where it was instead.
+    note(t('openFileFailed'));
+    chrome.downloads.show(task.downloadId);
+  }
+}
+
 function drawBar(canvas, task) {
   const dpr = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth || 600;
-  const h = 8;
+  const w = canvas.clientWidth || 160;
+  const h = 6;
   if (canvas.width !== Math.round(w * dpr)) {
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
@@ -260,7 +630,19 @@ function fitUrlBox() {
   const box = $('#url');
   box.rows = Math.min(8, Math.max(1, box.value.split('\n').length));
 }
-$('#url').addEventListener('input', fitUrlBox);
+// A link with [1-100] in it: say how many links it makes before adding.
+function previewPattern() {
+  const text = $('#url').value;
+  if (!/\[[^\]]+-[^\]]+\]/.test(text)) return note('');
+  const urls = parsePastedUrls(text);
+  if (urls.length < 2) return note('');
+  const msg = t('patternPreview', [String(urls.length), urls[0], urls[urls.length - 1]]);
+  note(urls.length >= PATTERN_MAX ? `${msg} ${t('patternLimit', [String(PATTERN_MAX)])}` : msg);
+}
+$('#url').addEventListener('input', () => {
+  fitUrlBox();
+  previewPattern();
+});
 
 // ---- links sniffed from a page ------------------------------------------------------
 
@@ -546,6 +928,13 @@ async function loadSettings() {
   $('#maxConnections').value = s.maxConnections;
   $('#maxActive').value = s.maxActive;
   $('#speedLimitMB').value = s.speedLimitMB || '';
+  $('#notify').checked = s.notify && (await chrome.permissions.contains({ permissions: ['notifications'] }));
+  $('#subdirs-on').checked = !!s.subfolders?.on;
+  $('#subdir-rows').hidden = !s.subfolders?.on;
+  for (const el of document.querySelectorAll('.subdir')) {
+    el.placeholder = t(DIR_KEYS[el.dataset.kind]);
+    el.value = s.subfolders?.names?.[el.dataset.kind] || '';
+  }
   const rules = { ...DEFAULT_RULES, ...s.sniffRules };
   for (const k of ['video', 'audio', 'image', 'ignore']) $(`#rule-${k}`).value = rules[k];
   $('#rule-minImageKB').value = rules.minImageKB;
@@ -560,6 +949,11 @@ async function saveSettings() {
     maxActive: clamp(Number($('#maxActive').value), 1, 10, DEFAULT_SETTINGS.maxActive),
     // Empty or 0 means no limit; tenths of a MB/s are allowed.
     speedLimitMB: Math.min(100000, Math.max(0, Math.round(Number($('#speedLimitMB').value) * 10) / 10 || 0)),
+    notify: $('#notify').checked,
+    subfolders: {
+      on: $('#subdirs-on').checked,
+      names: Object.fromEntries([...document.querySelectorAll('.subdir')].map((el) => [el.dataset.kind, el.value.trim()]).filter(([, v]) => v)),
+    },
     sniffRules: {
       video: $('#rule-video').value.trim(),
       audio: $('#rule-audio').value.trim(),
@@ -582,7 +976,11 @@ async function showFolder() {
   $('#folder-grant').hidden = !dir || perm === 'granted';
   $('#folder-hint').textContent = t(!dir ? 'folderHintDefault' : perm === 'granted' ? 'folderHintOn' : 'folderHintGrant');
   // The browser asks again after a restart: make that hard to miss.
-  if (dir && perm !== 'granted') $('#settings').open = true;
+  if (dir && perm !== 'granted') {
+    view.page = 'settings';
+    showPage();
+    render();
+  }
 }
 
 $('#folder-choose').addEventListener('click', async () => {
@@ -610,8 +1008,30 @@ $('#folder-reset').addEventListener('click', async () => {
 });
 showFolder();
 
+// Notifications are an optional permission, asked for when turned on, so the
+// update that added them did not need new permissions from every user.
+$('#notify').addEventListener('change', async (e) => {
+  if (e.target.checked && !(await chrome.permissions.request({ permissions: ['notifications'] }).catch(() => false))) {
+    e.target.checked = false;
+    note(t('notifyDenied'));
+  }
+  saveSettings();
+});
 for (const id of ['autoTakeover', 'minSizeMB', 'maxConnections', 'maxActive', 'speedLimitMB']) $('#' + id).addEventListener('change', saveSettings);
-for (const el of document.querySelectorAll('#settings .rule, #rule-minImageKB')) el.addEventListener('change', saveSettings);
+for (const el of document.querySelectorAll('#settings .rule, #rule-minImageKB, .subdir')) el.addEventListener('change', saveSettings);
+$('#subdirs-on').addEventListener('change', (e) => {
+  $('#subdir-rows').hidden = !e.target.checked;
+  saveSettings();
+});
+
+// The shortcut is set on Chrome's own page; show what it is now.
+async function showShortcut() {
+  const [cmd] = (await chrome.commands.getAll()).filter((c) => c.name === 'open-manager');
+  $('#shortcut-now').textContent = cmd?.shortcut ? t('shortcutNow', [cmd.shortcut]) : t('shortcutNone');
+}
+$('#shortcut-change').addEventListener('click', () => chrome.tabs.create({ url: 'chrome://extensions/shortcuts' }));
+showShortcut();
+window.addEventListener('focus', showShortcut);
 
 loadSettings().then(async () => {
   // Keep the engine's queue limit in step with the saved setting.
