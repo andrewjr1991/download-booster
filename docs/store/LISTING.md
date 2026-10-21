@@ -4,7 +4,7 @@ What to fill in on the Chrome Web Store developer dashboard (and the Edge Add-on
 
 ## Package
 
-- Upload: `download-booster-1.1.0.zip` (manifest.json, _locales, src, icons; nothing else).
+- Upload: `download-booster-1.1.1.zip` (manifest.json, _locales, src, icons; nothing else).
 - Default language: English. Chinese (zh_CN) listing added as a second language.
 - Category: Tools (工具).
 - Privacy policy URL: https://github.com/andrewjr1991/download-booster/blob/main/docs/store/PRIVACY.md

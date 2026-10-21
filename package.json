@@ -1,6 +1,6 @@
 {
   "name": "download-booster",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "type": "module",
   "description": "Browser extension for adaptive multi-connection downloads (MV3, pure-extension mode).",

@@ -32,14 +32,42 @@ export function startH2Server({ port = 8443, sizeMB = 40, rateKBps = 2048 } = {}
     sessions.add(session);
     session.on('close', () => sessions.delete(session));
   });
+  // GitHub-style signed links (the e2e maps github.com and
+  // private-user-images.githubusercontent.com here): the asset page
+  // redirects to a link that works until its token's "exp".
+  const SIGNED_HOST = 'https://private-user-images.githubusercontent.com';
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const signedUrl = (id, ttlMs) => `${SIGNED_HOST}/1/2-${id}.mp4?jwt=h.${b64({ exp: Math.floor((Date.now() + ttlMs) / 1000) })}.s`;
+  const tokenAlive = (jwt) => {
+    try {
+      return JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url')).exp * 1000 > Date.now();
+    } catch {
+      return false;
+    }
+  };
+
   server.on('stream', (stream, headers) => {
     const range = headers.range;
     log.push({ path: headers[':path'], range, cookie: !!headers.cookie, session: [...sessions].indexOf(stream.session) });
+    const u = new URL(headers[':path'], 'https://x');
+    const asset = /^\/user-attachments\/assets\/([\w-]+)$/.exec(u.pathname);
+    if (asset) {
+      stream.respond({ ':status': 302, location: signedUrl(asset[1], 5 * 60000) });
+      return stream.end();
+    }
+    if (u.pathname.startsWith('/1/2-') && !tokenAlive(u.searchParams.get('jwt') || '')) {
+      stream.respond({ ':status': 404 });
+      return stream.end();
+    }
     const m = range && /^bytes=(\d+)-(\d*)$/.exec(range);
     let start = 0;
     let end = size;
     const h = { 'content-type': 'application/octet-stream', 'accept-ranges': 'bytes', etag,
       'content-disposition': `attachment; filename="h2-${sizeMB}MB.bin"` };
+    if (u.pathname.startsWith('/1/2-')) {
+      h['content-type'] = 'video/mp4';
+      delete h['content-disposition'];
+    }
     let status = 200;
     if (m) {
       start = Number(m[1]);
@@ -76,7 +104,7 @@ export function startH2Server({ port = 8443, sizeMB = 40, rateKBps = 2048 } = {}
   server.on('close', () => clearInterval(timer));
 
   return new Promise((resolve) =>
-    server.listen(port, '127.0.0.1', () => resolve({ server, size, sha256, log, sessions, url: `https://127.0.0.1:${port}` })),
+    server.listen(port, '127.0.0.1', () => resolve({ server, size, sha256, log, sessions, signedUrl, url: `https://127.0.0.1:${port}` })),
   );
 }
 

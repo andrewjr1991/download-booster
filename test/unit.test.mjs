@@ -475,3 +475,30 @@ test('subfolders by file type', async () => {
   assert.equal(subfolderFor(null, 'clip.mp4'), '');
   assert.equal(cleanPath('a:b\\\\c/./d'), 'a_b/c/d');
 });
+
+test('signed links: GitHub attachments and their expiry', async () => {
+  const { sourceOf, expiresAt, isStale } = await import('../src/media-signed.js');
+  const jwt = (exp) => `h.${Buffer.from(JSON.stringify({ exp })).toString('base64url')}.s`;
+  const video = `https://private-user-images.githubusercontent.com/659597426/123-354b522a-ef6b-4547-bb07-c80c6268a5e8.mp4?jwt=${jwt(1)}`;
+  const image = `https://private-user-images.githubusercontent.com/12/354b522a-ef6b-4547-bb07-c80c6268a5e8.png?jwt=${jwt(4102444800)}`;
+  assert.equal(sourceOf(video), 'https://github.com/user-attachments/assets/354b522a-ef6b-4547-bb07-c80c6268a5e8');
+  assert.equal(sourceOf(image), 'https://github.com/user-attachments/assets/354b522a-ef6b-4547-bb07-c80c6268a5e8');
+  assert.equal(sourceOf('https://private-user-images.githubusercontent.com/x/y.mp4'), null);
+  assert.equal(sourceOf('https://example.com/659597426/123-354b522a-ef6b-4547-bb07-c80c6268a5e8.mp4'), null);
+  assert.equal(expiresAt(video), 1000);
+  assert.equal(expiresAt('https://example.com/a.mp4?jwt=garbage'), null);
+  assert.ok(isStale(video));
+  assert.ok(!isStale(image));
+  assert.ok(!isStale('https://example.com/a.mp4'), 'no token: nothing known');
+  // The media list: one entry per file, whose link is the newest one seen.
+  const list = [];
+  addMedia(list, { url: video, mime: 'video/mp4', size: 10 });
+  addMedia(list, { url: image, mime: 'image/png', size: 40000 });
+  assert.equal(list.length, 2);
+  const newer = video.replace(/jwt=.*/, `jwt=${jwt(4102444800)}`);
+  assert.ok(addMedia(list, { url: newer, mime: 'video/mp4', size: 10 }), 'a newer link counts as a change');
+  assert.equal(list.length, 2);
+  assert.equal(list[0].url, newer);
+  assert.ok(!addMedia(list, { url: video, mime: 'video/mp4', size: 10 }), 'an older link does not replace it');
+  assert.equal(list[0].url, newer);
+});

@@ -338,6 +338,12 @@ async function onWorkerMessage(t, m) {
       }
       persist(t);
       break;
+    case 'renewed':
+      // A signed link ran out and the worker got a fresh one.
+      t.finalUrl = m.url;
+      setRequestHeaders(t);
+      persist(t);
+      break;
     case 'rejected':
       endWorker(t);
       pendingAdds.get(t.id)?.({ accepted: false, reason: m.reason });

@@ -26,7 +26,15 @@ const ctx = await chromium.launchPersistentContext(userDir, {
   executablePath: process.env.CHROMIUM || undefined,
   acceptDownloads: true,
   downloadsPath: downloadDir,
-  args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, '--ignore-certificate-errors'],
+  args: [
+    `--disable-extensions-except=${EXT}`,
+    `--load-extension=${EXT}`,
+    '--ignore-certificate-errors',
+    // Only local servers are used; a system proxy would resolve the mapped hosts itself.
+    '--proxy-server=direct://',
+    // GitHub-style signed links are served by the HTTP/2 test server.
+    '--host-resolver-rules=MAP github.com 127.0.0.1:8443, MAP private-user-images.githubusercontent.com 127.0.0.1:8443',
+  ],
 });
 
 let [sw] = ctx.serviceWorkers();
@@ -1169,6 +1177,58 @@ await check('completed download: copy its link, download it again', async () => 
   const { hash, item } = await savedFileHash(done.downloadId);
   if (hash !== srv.sha256) throw new Error('hash mismatch');
   return `copied the link; saved again as ${path.basename(item.filename)}`;
+});
+
+await check('GitHub attachment: a run-out signed link is renewed for the download and the preview', async () => {
+  const uuid = '354b522a-ef6b-4547-bb07-c80c6268a5e8';
+  await setSettings({ autoTakeover: false, minSizeMB: 20, maxConnections: 4 });
+  // Download from a link that ran out a minute ago: the first request gets
+  // 404, the worker asks the asset page for a new link and carries on.
+  const before = h2.log.length;
+  const { id } = await engine('add', { url: h2.signedUrl(uuid, -60000), maxConnections: 4 });
+  const done = await waitTask(id, (t) => t.status === 'completed');
+  const { hash } = await savedFileHash(done.downloadId);
+  if (hash !== h2.sha256) throw new Error('hash mismatch');
+  const asked = h2.log.slice(before).filter((l) => l.path.startsWith('/user-attachments/')).length;
+  if (asked !== 1) throw new Error(`asked for a new link ${asked} times`);
+  // A link that runs out while the download is on: later pieces get 404
+  // and are fetched again with a new link, without a failure.
+  const { id: id2 } = await engine('add', { url: h2.signedUrl(uuid, 2500), maxConnections: 4 });
+  const done2 = await waitTask(id2, (t) => t.status === 'completed');
+  const { hash: hash2 } = await savedFileHash(done2.downloadId);
+  if (hash2 !== h2.sha256) throw new Error('hash mismatch after renewing mid-way');
+  const renewals = h2.log.slice(before).filter((l) => l.path.startsWith('/user-attachments/')).length - asked;
+  if (renewals < 1) throw new Error('no renewal mid-way');
+  // The popup: the page's link is about to run out when the preview opens;
+  // a new one is fetched and used for the preview and the download.
+  const soon = h2.signedUrl(uuid, 4000);
+  const p = await ctx.newPage();
+  await p.goto(`${srv.url}/page`);
+  await p.evaluate((url) => fetch(url, { mode: 'no-cors', headers: { Range: 'bytes=0-1' } }), soon);
+  await sleep(1500);
+  const tabId = await sw.evaluate(async (url) => (await chrome.tabs.query({ url }))[0].id, `${srv.url}/page`);
+  const pop = await ctx.newPage();
+  await pop.goto(`chrome-extension://${extId}/src/popup.html?tab=${tabId}`);
+  await pop.waitForSelector('#kinds button[data-kind="video"]');
+  await pop.click('#kinds button[data-kind="video"]');
+  const item = pop.locator('#media-list li', { hasText: `2-${uuid}.mp4` });
+  await sleep(3000); // now within the 20 s margin of running out
+  await item.locator('.info').click();
+  await pop.waitForFunction((old) => document.querySelector('#pv-name')?.title && document.querySelector('#pv-name').title !== old, soon, { timeout: 10000 });
+  const previewUrl = await pop.getAttribute('#pv-name', 'title');
+  if (!previewUrl.includes('jwt=') || previewUrl === soon) throw new Error(`preview uses ${previewUrl}`);
+  const ids = (await engine('list')).tasks.map((t) => t.id);
+  await pop.click('#pv-download');
+  let task;
+  for (let i = 0; i < 20 && !task; i++) {
+    await sleep(250);
+    task = (await engine('list')).tasks.find((t) => !ids.includes(t.id));
+  }
+  if (task?.url !== previewUrl) throw new Error(`downloaded ${task?.url}`);
+  await waitTask(task.id, (t) => t.status === 'completed');
+  await pop.close();
+  await p.close();
+  return `expired link: renewed once, file identical; mid-way: ${renewals} renewal(s); preview and download use the new link`;
 });
 
 await check('small files are left to the browser', async () => {
