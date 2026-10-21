@@ -6,6 +6,7 @@ import { pickFilename, applyRename } from './http.js';
 import { getFolder, setFolder, folderPermission } from './folder.js';
 import { parseChecksum, ALGO_NAMES } from './hash.js';
 import { TASK_GROUPS, taskGroup, taskKind, matchTask } from './tasks-filter.js';
+import { freshUrl } from './media-signed.js';
 import {
   t,
   DEFAULT_SETTINGS,
@@ -883,7 +884,16 @@ function openPreview(l) {
     el.autoplay = true;
   }
   el.src = l.url;
-  el.onerror = () => ($('#sp-info').textContent = t('previewFailed'));
+  // A signed link that ran out (GitHub attachments): once more with a new one.
+  let renewed = false;
+  el.onerror = async () => {
+    const fresh = !renewed && (await freshUrl(l.url));
+    renewed = true;
+    if (fresh) {
+      l.url = fresh;
+      el.src = fresh;
+    } else $('#sp-info').textContent = t('previewFailed');
+  };
   const info = () => {
     const parts = [];
     if (el.naturalWidth) parts.push(`${el.naturalWidth}×${el.naturalHeight}`);

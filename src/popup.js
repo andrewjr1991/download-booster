@@ -6,6 +6,7 @@ import { t, localize, engine, addUrls, bytes, speed, duration, statusText } from
 import { taskKind } from './tasks-filter.js';
 import { variantLabel, audioFor } from './hls.js';
 import { parseManifest } from './dash.js';
+import { isStale, freshUrl } from './media-signed.js';
 
 localize();
 const $ = (sel) => document.querySelector(sel);
@@ -210,8 +211,15 @@ function toggle(m) {
 
 let current = null;
 
-function openPreview(m) {
+async function openPreview(m) {
   current = m;
+  // A signed link that has run out (GitHub's last five minutes): get a new
+  // one first, and keep it for the download too.
+  if (isStale(m.url)) {
+    const fresh = await freshUrl(m.url);
+    if (current !== m) return;
+    if (fresh) m.url = fresh;
+  }
   const stage = $('#pv-stage');
   stage.querySelector('video, audio')?.pause();
   let el;
@@ -231,7 +239,17 @@ function openPreview(m) {
         el.videoWidth ? `${el.videoWidth}×${el.videoHeight}` : null,
       ].filter(Boolean));
   }
-  el.onerror = () => ($('#pv-info').textContent = t('previewFailed'));
+  // Refused: perhaps the link ran out without saying so. One more go.
+  let renewed = false;
+  el.onerror = async () => {
+    const fresh = !renewed && (await freshUrl(m.url));
+    renewed = true;
+    if (fresh && current === m) {
+      m.url = fresh;
+      $('#pv-name').title = m.url;
+      el.src = fresh;
+    } else $('#pv-info').textContent = t('previewFailed');
+  };
   el.src = m.url;
   if (m.kind === 'audio') {
     const art = document.createElement('span');

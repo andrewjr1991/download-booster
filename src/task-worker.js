@@ -18,6 +18,7 @@ import {
 } from './scheduler.js';
 import { parseContentRange, pickFilename, isThrottleStatus, applyRename } from './http.js';
 import { uniqueName, finalize } from './folder.js';
+import { sourceOf, isStale, freshUrl, GONE } from './media-signed.js';
 import { subfolderFor } from './subfolders.js';
 import { createHash, ALGO_NAMES } from './hash.js';
 
@@ -249,6 +250,10 @@ async function probe() {
   // A takeover must decide quickly (the browser's own download is waiting),
   // so only a hand-added task retries a failed first request.
   const attempts = task.takeover ? 1 : 4;
+  // A signed link that has run out is renewed first, and once more if the
+  // server turns it down anyway.
+  let renewed = false;
+  if (isStale(task.url) && (await renew(primary(), task.url))) renewed = true;
   for (let i = 0; i < attempts; i++) {
     if (i) await new Promise((r) => setTimeout(r, 1000 * 2 ** (i - 1)));
     if (stopping) return;
@@ -262,6 +267,13 @@ async function probe() {
     }
     if (resp.ok) break;
     ac.abort();
+    if (!renewed && GONE.has(resp.status) && sourceOf(task.url)) {
+      renewed = true;
+      if (await renew(primary(), task.url)) {
+        i -= 1;
+        continue;
+      }
+    }
     const transient = resp.status === 429 || resp.status >= 500;
     if (transient && i < attempts - 1) continue;
     if (task.takeover) return reject(`http-${resp.status}`);
@@ -402,6 +414,22 @@ async function checkMirrors() {
     // Each server has its own connection limit.
     controller.setMax(Math.min(16, (task.maxConnections || 6) * good));
   }
+}
+
+// A fresh address for a source whose signed link stopped working. Several
+// connections fail together: the first renews, the rest get its result.
+let renewing = null;
+async function renew(src, failedUrl) {
+  if (src.url !== failedUrl) return true; // already renewed by another connection
+  renewing ??= freshUrl(src.url).finally(() => (renewing = null));
+  const fresh = await renewing;
+  if (!fresh || src.url !== failedUrl) return !!fresh;
+  src.url = fresh;
+  if (src.primary) {
+    task.url = fresh;
+    post({ type: 'renewed', url: fresh });
+  }
+  return true;
 }
 
 function pickSource() {
@@ -649,6 +677,11 @@ async function runConn(seg, resp = null, ac = new AbortController(), pool = null
     if (stopping || recovering || ac.signal.reason === 'folder' || ac.signal.reason === 'shrink' || ac.signal.reason === 'done' || ac.signal.reason === 'slow') return;
     if (err instanceof PoolError) {
       omitPool = 'bad'; // retried right away from the cookie pool
+      return;
+    }
+    // A signed link that ran out mid-download: renew it and try the piece again.
+    if (err instanceof HttpError && GONE.has(err.status) && sourceOf(src.url) && (await renew(src, src.url))) {
+      retryAt.set(seg.id, Date.now());
       return;
     }
     if (!src.primary) {

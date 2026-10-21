@@ -2,6 +2,7 @@
 // images and streaming playlists. Pure helpers, unit-tested under Node.
 
 import { extensionOf } from './sniff.js';
+import { sourceOf, expiresAt } from './media-signed.js';
 
 export const MEDIA_KINDS = ['video', 'audio', 'image', 'stream'];
 export const MIN_IMAGE_BYTES = 10 * 1024; // smaller images are icons and UI chrome
@@ -39,6 +40,8 @@ export function mediaKey(url) {
     // Rewriting the query re-encodes it, which can break signed URLs, so
     // only touch it when there is something to drop.
     if (RANGE_PARAMS.some((p) => u.searchParams.has(p))) for (const p of RANGE_PARAMS) u.searchParams.delete(p);
+    // A signed link is the same file whatever its token says.
+    if (sourceOf(url) && u.searchParams.has('jwt')) u.searchParams.delete('jwt');
     return u.href;
   } catch {
     return url;
@@ -110,15 +113,21 @@ export function addMedia(list, { url, type, mime, size, at = Date.now() }, rules
   const key = mediaKey(url);
   const found = list.find((m) => m.key === key);
   if (found) {
+    let changed = false;
     if (size && size > (found.size || 0)) {
       found.size = size;
-      return true;
+      changed = true;
     }
-    return false;
+    // The page got a newer signed link: that is the one to use now.
+    if (url !== found.url && (expiresAt(url) || 0) > (expiresAt(found.url) || 0)) {
+      found.url = url;
+      changed = true;
+    }
+    return changed;
   }
   // The key doubles as the download URL: with the range parameters left in,
-  // the server would only send that slice.
-  list.push({ key, url: key, kind, mime: (mime || '').split(';')[0].trim(), size: size || null, name: mediaName(url), at });
+  // the server would only send that slice. A signed link keeps its token.
+  list.push({ key, url: sourceOf(url) ? url.split('#')[0] : key, kind, mime: (mime || '').split(';')[0].trim(), size: size || null, name: mediaName(url), at });
   if (list.length > MAX_PER_TAB) list.splice(0, list.length - MAX_PER_TAB);
   return true;
 }
