@@ -521,6 +521,18 @@ await check('popup previews: hotlink-protected image full size, audio plays', as
   // Image: the thumbnail and the preview load despite hotlink protection.
   await pop.click('#kinds button[data-kind="image"]');
   await pop.waitForFunction(() => document.querySelector('#media-list li.tile img')?.naturalWidth > 0, null, { timeout: 10000 });
+  // A page with dozens of images: the tiles stay square and the grid
+  // scrolls, instead of the rows being squeezed on top of each other.
+  const squeezed = await pop.evaluate(() => {
+    const list = document.querySelector('#media-list');
+    const tile = list.querySelector('li.tile');
+    for (let i = 0; i < 60; i++) list.append(tile.cloneNode(true));
+    const r = list.lastElementChild.getBoundingClientRect();
+    const out = { w: Math.round(r.width), h: Math.round(r.height), scrolls: list.scrollHeight > list.clientHeight };
+    for (const extra of [...list.children].slice(1)) if (extra !== tile) extra.remove();
+    return out;
+  });
+  if (Math.abs(squeezed.w - squeezed.h) > 1 || !squeezed.scrolls) throw new Error(`tiles ${JSON.stringify(squeezed)}`);
   await pop.click('#media-list li.tile');
   await pop.waitForFunction(() => document.querySelector('#pv-stage img')?.naturalWidth === 200, null, { timeout: 10000 });
   await pop.waitForFunction(() => document.querySelector('#pv-info').textContent.includes('200×150'), null, { timeout: 5000 });

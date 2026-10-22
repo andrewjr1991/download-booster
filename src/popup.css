@@ -226,6 +226,9 @@ li[data-s='error'] .mini-bar > i {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
+  /* Each row as tall as its square tiles: with auto rows the grid squeezes
+     them to fit the popup when there are many. */
+  grid-auto-rows: max-content;
   align-content: start;
   padding: 2px;
   background: transparent;
